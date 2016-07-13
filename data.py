@@ -1,11 +1,98 @@
 import re
+import copy
+import abc
 
 import pandas as pd
 import numpy as np
-import copy
 
 
-class ADVMProcParam:
+class ADVMParam(abc.ABC):
+    """Base class for ADVM parameter classes"""
+
+    @abc.abstractmethod
+    def __init__(self):
+        self._dict = {}
+
+    def __deepcopy__(self, memo):
+        """Provide method for copy.deepcopy()"""
+
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v, in self.__dict__.items():
+            setattr(result, k, copy.deepcopy(v, memo))
+        return result
+
+    def __getitem__(self, key):
+        """Return the requested parameter value.
+
+        :param key: Parameter key
+        :return: Parameter corresponding to the given key
+        """
+        return self._dict[key]
+
+    def __setitem__(self, key, value):
+        """Set the requested parameter value.
+        :param key: Parameter key
+        :param value: Value to be stored
+        :return: Nothing
+        """
+
+        self._check_value(key, value)
+        self._dict[key] = value
+
+    @abc.abstractmethod
+    def _check_value(self, key, value):
+        pass
+
+    def _check_key(self, key):
+        """Check if the provided key exists in the _dict. Raise an exception if not.
+
+        :param key: Parameter key to check
+        :return: Nothing
+        """
+
+        if key not in self._dict.keys():
+            raise KeyError(key)
+        return
+
+    def get_dict(self):
+        """Return a dictionary containing the processing parameters.
+
+        :return: Dictionary containing the processing parameters
+        """
+
+        return copy.deepcopy(self._dict)
+
+    def items(self):
+        """Return a set-like object providing a view on the contained parameters.
+
+        :return: Set-like object providing a view on the contained parameters
+        """
+
+        return self._dict.items()
+
+    def keys(self):
+        """Return the parameter keys.
+
+        :return: A set-like object providing a view on the parameter keys.
+        """
+
+        return self._dict.keys()
+
+    def update(self, update_values):
+        """Update the  parameters.
+
+        :param update_values: Item containing key/value processing parameters
+        return: Nothing
+        """
+
+        for key, value in update_values.items():
+            self._check_value(key, value)
+            self._dict[key] = value
+
+
+class ADVMProcParam(ADVMParam):
     """
     Stores ADVM Processing parameters.
 
@@ -20,68 +107,71 @@ class ADVMProcParam:
             when setting the 'Minimum Number of Cells' value.
         """
 
+        # mute warning from PyCharm
+        # why is this necessary?
+        super().__init__()
+
         self._number_of_cells = num_cells
         self._proc_dict = {
             "Beam": 2,
-            "Moving Average Span": 1,
+            # "Moving Average Span": 1,
             "Backscatter Values": "SNR",
             "Minimum Cell Mid-Point Distance": -np.inf,
             "Maximum Cell Mid-Point Distance": np.inf,
-            "Minimum Number of Cells": 1,
+            "Minimum Number of Cells": 2,
             "Minimum Vbeam": -np.inf,
             "Near Field Correction": True,
             "WCB Profile Adjustment": True
         }
 
-    def __getitem__(self, key):
-        """
-        Return the requested processing parameter value.
+    # def __getitem__(self, key):
+    #     """
+    #     Return the requested processing parameter value.
+    #
+    #     :param key: Processing parameter key
+    #     :return: Processing parameter corresponding to the given key
+    #     """
+    #
+    #     self._check_proc_key(key)
+    #     return self._proc_dict[key]
 
-        :param key: Processing parameter key
-        :return: Processing parameter corresponding to the given key
-        """
+    # def __setitem__(self, key, value):
+    #     """
+    #     Store the requested processing parameter value.
+    #
+    #     :param key: Processing parameter key
+    #     :param value: Processing value to be stored
+    #     :return: Nothing
+    #     """
+    #
+    #     self._check_value(key, value)
+    #     self._proc_dict[key] = value
+    #     return
 
-        self._check_proc_key(key)
-        return self._proc_dict[key]
+    # def __delitem__(self, key):
+    #     """
+    #     Delete the requested processing parameter.
+    #
+    #     :param key: Processing parameter key
+    #     :return: Nothing
+    #     """
+    #
+    #     self._proc_dict.pop(key, None)
+    #     return
 
-    def __setitem__(self, key, value):
-        """
-        Store the requested processing parameter value.
+    # def _check_proc_key(self, key):
+    #     """
+    #     Check if the provided key exists in the proc_dict. Raise an exception if not.
+    #
+    #     :param key: User-provided processing dictionary key
+    #     :return: Nothing
+    #     """
+    #
+    #     if key not in self._proc_dict.keys():
+    #         raise KeyError(key)
+    #     return
 
-        :param key: Processing parameter key
-        :param value: Processing value to be stored
-        :return: Nothing
-        """
-
-        self._check_proc_key(key)
-        self._check_proc_value(key, value)
-        self._proc_dict[key] = value
-        return
-
-    def __delitem__(self, key):
-        """
-        Delete the requested processing parameter.
-
-        :param key: Processing parameter key
-        :return: Nothing
-        """
-
-        self._proc_dict.pop(key, None)
-        return
-
-    def _check_proc_key(self, key):
-        """
-        Check if the provided key exists in the proc_dict. Raise an exception if not.
-
-        :param key: User-provided processing dictionary key
-        :return: Nothing
-        """
-
-        if key not in self._proc_dict.keys():
-            raise KeyError(key)
-        return
-
-    def _check_proc_value(self, key, value):
+    def _check_value(self, key, value):
         """
         Check if the value provided is valid. Raise an exception if not.
 
@@ -89,6 +179,8 @@ class ADVMProcParam:
         :param value: User-provided processing dictionary value
         :return: Nothing
         """
+
+        self._check_key(key)
 
         if key == "Beam" and (value in range(1, 3) or value == 'Avg'):
             return
@@ -114,67 +206,159 @@ class ADVMProcParam:
         else:
             raise ValueError(value)
 
+    # def get_dict(self):
+    #     """Return a dictionary containing the processing parameters.
+    #
+    #     :return: A dictionary containing the processing parameters
+    #     """
+    #
+    #     return copy.deepcopy(self._proc_dict)
 
-class ADVMConfigParam:
+    # def items(self):
+    #     """Return a set-like object providing a view on the contained items.
+    #
+    #     :return: Set-like object providing a view on the contained items
+    #     """
+    #
+    #     return self._proc_dict.items()
+
+    # def update(self, update_dict):
+    #     """Update the processing parameters.
+    #     :param update_dict: Dictionary containing key/value processing parameters
+    #     return: Nothing
+    #     """
+    #
+    #     for key, value in update_dict.items():
+    #         self._check_proc_value(key, value)
+    #         self._proc_dict[key] = value
+
+
+class ADVMConfigParam(ADVMParam):
     """
     Stores ADVM Configuration parameters.
 
     """
 
-    def __init__(self, config_dict):
+    def __init__(self):
+        """
         """
 
-        :param config_dict: Dictionary containing ADVM configuration data required to process ADVM data.
-        """
+        # mute warning from PyCharm
+        # why is this necessary?
+        super().__init__()
 
-        self._config_dict = copy.deepcopy(config_dict)
+        # the valid for accessing information in the configuration parameters
+        valid_keys = ['Frequency', 'Effective Transducer Diameter', 'Beam Orientation', 'Slant Angle',
+                            'Blanking Distance', 'Cell Size', 'Number of Cells']
 
-    def __getitem__(self, key):
-        """
-        Return the requested configuration parameter value.
+        # initial values for the configuration parameters
+        init_values = np.tile(np.nan, (len(valid_keys),))
 
-        :param key: Configuration parameter key
-        :return: Configuration parameter corresponding to the given key
-        """
+        # initialize the configuration dictionary
+        self._config_dict = dict(zip(valid_keys, init_values))
 
-        self._check_config_key(key)
-        return self._config_dict[key]
+    # def __deepcopy__(self, memo):
+    #     """Provide method for copy.deepcopy()"""
+    #
+    #     cls = self.__class__
+    #     result = cls.__new__(cls)
+    #     memo[id(self)] = result
+    #     for k, v, in self.__dict__.items():
+    #         setattr(result, k, copy.deepcopy(v, memo))
+    #     return result
 
-    def __setitem__(self, key, value):
-        """
-        Store the requested configuration parameter value.
+    # def __getitem__(self, key):
+    #     """
+    #     Return the requested configuration parameter value.
+    #
+    #     :param key: Configuration parameter key
+    #     :return: Configuration parameter corresponding to the given key
+    #     """
+    #
+    #     self._check_config_key(key)
+    #     return self._config_dict[key]
 
-        :param key: Configuration parameter key
-        :param value: Configuration value to be stored
+    # def __setitem__(self, key, value):
+    #     """
+    #     Store the requested configuration parameter value.
+    #
+    #     :param key: Configuration parameter key
+    #     :param value: Configuration value to be stored
+    #     :return: Nothing
+    #     """
+    #
+    #     self._check_config_value(key, value)
+    #     self._config_dict[key] = value
+    #     return
+
+    # def __delitem__(self, key):
+    #     """
+    #     Delete the requested configuration parameter.
+    #
+    #     :param key: Configuration parameter key
+    #     :return: Nothing
+    #     """
+    #
+    #     self._config_dict.pop(key, None)
+    #     return
+
+    # def _check_config_key(self, key):
+    #     """Check if the provided key exists in the config_dict. Raise an exception if not.
+    #
+    #     :param key: Configuration dictionary key
+    #     :return: Nothing
+    #     """
+    #
+    #     if key not in self._config_dict.keys():
+    #         raise KeyError(key)
+    #     return
+
+    def _check_value(self, key, value):
+        """Check if the provided value is valid for the given key. Raise an exception if not.
+
+        :param key: Keyword for configuration item
+        :param value: Value for corresponding key
         :return: Nothing
         """
 
-        self._check_config_key(key)
-        self._config_dict[key] = value
-        return
+        self._check_key(key)
 
-    def __delitem__(self, key):
-        """
-        Delete the requested configuration parameter.
+        if key == "Beam Orientation" and (value == "Horizontal" or value == "Vertical"):
+            return
+        elif key == "Number of Cells" and (1 <= value and isinstance(value, int)):
+            return
+        elif 0 <= value and isinstance(value, float):
+            return
+        else:
+            raise ValueError(value)
 
-        :param key: Configuration parameter key
-        :return: Nothing
-        """
+    # def get_dict(self):
+    #     """Return a dictionary containing the configuration parameters.
+    #
+    #     :return: A dictionary containing the configuration parameters
+    #     """
+    #
+    #     return copy.deepcopy(self._config_dict)
 
-        self._config_dict.pop(key, None)
-        return
-
-    def _check_config_key(self, key):
-        """
-        Check if the provided key exists in the config_dict. Raise an exception if not.
-
-        :param key: Configuration dictionary key
-        :return: Nothing
-        """
-
-        if key not in self._config_dict.keys():
-            raise KeyError(key)
-        return
+    # def items(self):
+    #     """
+    #     Return a set-like object providing a view on the contained items.
+    #
+    #     :return: Set-like object providing a view on the contained items
+    #     """
+    #
+    #     return self._config_dict.items()
+    #
+    # def update(self, update_dict):
+    #     """Update the configuration parameters.
+    #
+    #     :param update_dict: Dictionary containing updated parameters
+    #     :return: Nothing
+    #     """
+    #
+    #     for key, value in update_dict.items():
+    #         self._check_config_value(key, value)
+    #         self._config_dict[key] = value
 
 
 class ADVMData:
@@ -183,17 +367,19 @@ class ADVMData:
 
     """
 
-    def __init__(self, config_dict, acoustic_df):
+    def __init__(self, config_params, acoustic_df):
         """
         Initializes ADVMData instance. Creates default processing configuration data attribute.
 
-        :param config_dict: Dictionary containing ADVM configuration data required to process ADVM data
+        :param config_params: ADVM configuration data required to process ADVM data
         :param acoustic_df: DataFrame containing acoustic data
         """
 
-        self._acoustic_df = copy.deepcopy(acoustic_df)
-        self._config_dict = ADVMConfigParam(config_dict)
-        self._proc_dict = ADVMProcParam(config_dict["Number of Cells"])
+        # self._acoustic_df = copy.deepcopy(acoustic_df)
+        self._acoustic_df = acoustic_df.copy(deep=True)
+        self._config_param = ADVMConfigParam()
+        self._config_param.update(config_params)
+        self._proc_param = ADVMProcParam(self._config_param["Number of Cells"])
 
     def set_proc_params(self, proc_params):
         """
@@ -204,41 +390,27 @@ class ADVMData:
         """
 
         for key in proc_params.keys():
-            self._proc_dict[key] = proc_params[key]
+            self._proc_param[key] = proc_params[key]
 
         return
 
-    def get_config_params(self, config_params):
+    def get_config_params(self):
         """
-        Find and return configuration parameters. Throw ValueError if config_params contains invalid key.
+        Return dictionary containing configuration parameters.
 
-        :param config_params: List containing configuration parameters (keys)
         :return: Dictionary containing configuration parameters
         """
 
-        requested_params = {}
+        return self._config_param.get_dict()
 
-        # Set return values for all matching keys.
-        for key in config_params:
-            requested_params[key] = self._config_dict[key]
-
-        return requested_params
-
-    def get_proc_params(self, proc_params):
+    def get_proc_params(self):
         """
-        Find and return processing parameters. Throws ValueError if proc_params contains invalid key.
+        Return dictionary containing processing parameters.
 
-        :param proc_params: List containing processing parameters (keys)
         :return: Dictionary containing processing parameters
         """
 
-        requested_params = {}
-
-        # Set return values for all matching keys.
-        for key in proc_params:
-            requested_params[key] = self._proc_dict[key]
-
-        return requested_params
+        return self._proc_param.get_dict()
 
     def get_meanSCB(self):
         """
@@ -335,13 +507,13 @@ class RawAcousticDataContainer:
         # return the cell range
         return self._acoustic_data[frequency].get_cell_range()
 
-    def get_config_params(self, frequency, config_params):
+    def get_config_params(self, frequency):
         """Return the configuration parameters of an acoustic data
         structure.
         """
 
         # return the configuration parameters described by config_params
-        return self._acoustic_data[frequency].get_config_params(config_params)
+        return self._acoustic_data[frequency].get_config_params()
 
     def get_freqs(self):
         """Return the acoustic frequencies of the contained data."""
@@ -415,7 +587,7 @@ class RawAcousticDataConverter:
 
     def __init__(self):
 
-        self._conf_params = ADVMConfParams()
+        self._conf_params = ADVMConfigParam()
 
     def get_conf_params(self):
         """Returns ADVM configuration parameters"""
