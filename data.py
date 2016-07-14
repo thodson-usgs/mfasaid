@@ -14,7 +14,12 @@ class ADVMParam(abc.ABC):
         self._dict = param_dict
 
     def __deepcopy__(self, memo):
-        """Provide method for copy.deepcopy()"""
+        """
+        Provide method for copy.deepcopy().
+
+        :param memo:
+        :return:
+        """
 
         cls = self.__class__
         result = cls.__new__(cls)
@@ -33,6 +38,7 @@ class ADVMParam(abc.ABC):
 
     def __setitem__(self, key, value):
         """Set the requested parameter value.
+
         :param key: Parameter key
         :param value: Value to be stored
         :return: Nothing
@@ -112,6 +118,7 @@ class ADVMProcParam(ADVMParam):
             "Beam": 2,
             # "Moving Average Span": 1,
             "Backscatter Values": "SNR",
+            "Intensity Scale Factor": 0.43,
             "Minimum Cell Mid-Point Distance": -np.inf,
             "Maximum Cell Mid-Point Distance": np.inf,
             "Minimum Number of Cells": 2,
@@ -138,6 +145,8 @@ class ADVMProcParam(ADVMParam):
         elif key == "Moving Average Span" and (0 <= value <= 1):
             return
         elif key == "Backscatter Values" and (value == "SNR" or value == "Amp"):
+            return
+        elif key == "Intensity Scale Factor" and 0 < value:
             return
         elif key == "Minimum Cell Mid-Point Distance":
             np.float(value)
@@ -170,7 +179,7 @@ class ADVMConfigParam(ADVMParam):
 
         # the valid for accessing information in the configuration parameters
         valid_keys = ['Frequency', 'Effective Transducer Diameter', 'Beam Orientation', 'Slant Angle',
-                            'Blanking Distance', 'Cell Size', 'Number of Cells']
+                      'Blanking Distance', 'Cell Size', 'Number of Cells']
 
         # initial values for the configuration parameters
         init_values = np.tile(np.nan, (len(valid_keys),))
@@ -272,9 +281,55 @@ class ADVMData:
         return pd.Series(index=self._acoustic_df.index.values)
 
     def get_MB(self):
-        """Return measured backscatter"""
+        """
+        Calculate measured backscatter values based on processing parameters.
 
-        return
+        :return: DataFrame containing measured backscatter values
+        """
+
+        # check backscatter value to be used in calculation
+        if self._proc_dict["Backscatter Values"] == "Amp":
+            calculated_df = self._calculate_MB("Amp")
+            calculated_df *= self._proc_dict["Intensity Scale Factor"]
+            return calculated_df
+        else:
+            calculated_df = self._calculate_MB("SNR")
+            return calculated_df
+
+    def _calculate_MB(self, backscatter_value):
+        """
+        Help calculate measured backscatter DataFrame based on the passed in backscatter value.
+
+        :param backscatter_value: Backscatter value processing parameter ('Amp' or 'SNR')
+        :return: DataFrame containing intermediate measured backscatter values
+        """
+
+        # create an empty data frame with just an index
+        measured_backscatter_df = pd.DataFrame(index=self._acoustic_df.index)
+
+        # get DataFrame containing only 'backscatter_value' column values (Amp or SNR)
+        backscatter_df = self._acoustic_df.filter(regex=('\d+' + backscatter_value))
+
+        # divided by 2 since there are 2 beams per cell
+        number_of_cells = int(len(backscatter_df.columns) / 2)
+
+        # iterate through each cell by its number
+        for cell_num in range(1, number_of_cells + 1):
+            zero_pad_num = str(cell_num).zfill(2)
+            cell_df = backscatter_df.filter(regex=zero_pad_num)
+
+            # select the beam number or calculate the average based on the processing parameter
+            if self._proc_dict["Beam"] == 1:
+                measured_backscatter_df['MB' + zero_pad_num] = pd.Series(cell_df[cell_df.columns[0]],
+                                                                         index=self._acoustic_df.index)
+            elif self._proc_dict["Beam"] == 2:
+                measured_backscatter_df['MB' + zero_pad_num] = pd.Series(cell_df[cell_df.columns[1]],
+                                                                         index=self._acoustic_df.index)
+            else:
+                measured_backscatter_df['MB' + zero_pad_num] = pd.Series(cell_df.mean(axis=1),
+                                                                         index=self._acoustic_df.index)
+
+        return measured_backscatter_df
 
     def get_SAC(self):
         """

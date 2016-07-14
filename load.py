@@ -2,7 +2,7 @@ import pandas as pd
 import linecache
 import math
 import os
-from ADVMData import ADVMData
+from data import ADVMData
 
 
 def load_argonaut_data(data_path, filename):
