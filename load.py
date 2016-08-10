@@ -14,31 +14,79 @@ def load_argonaut_data(data_path, filename):
     :return: ADVMData object containing the Argonaut dataset information
     """
 
+    # Read the Argonaut '.dat' file into a DataFrame
+    arg_dat_file = os.path.join(data_path, filename + ".dat")
+    dat_df = _read_argonaut_dat_file(arg_dat_file)
+
+    # Read the Argonaut '.snr' file into a DataFrame
+    arg_snr_file = os.path.join(data_path, filename + ".snr")
+    snr_df = _read_argonaut_snr_file(arg_snr_file)
+
+    # Read specific configuration values from the Argonaut '.ctl' file into a dictionary.
+    arg_ctl_file = os.path.join(data_path, filename + ".ctl")
+    config_dict = _read_argonaut_ctl_file(arg_ctl_file)
+
+    # Combine the '.snr' and '.dat.' DataFrames into a single acoustic DataFrame, make the timestamp
+    # the index, and return an instantiated ADVMData object
+    acoustic_df = pd.DataFrame(index=dat_df.index, data=(pd.concat([snr_df, dat_df], axis=1)))
+    acoustic_df.set_index('year', drop=True, inplace=True)
+    acoustic_df.index.names = ['Timestamp']
+
+    return ADVMData(config_dict, acoustic_df)
+
+
+def _read_argonaut_dat_file(arg_dat_filepath):
+    """
+    Read the Argonaut '.dat' file into a DataFrame.
+
+    :param arg_dat_filepath: Filepath containing the Argonaut '.dat' file
+    :return: Timestamp formatted DataFrame containing '.dat' file contents
+    """
+
     # Read the Argonaut '.dat' file into a DataFrame and reformat the columns representing
     # years, months, days, etc. into one new timestamp column.
-    arg_dat_file = os.path.join(data_path, filename + ".dat")
-    dat_df = pd.read_table(arg_dat_file, sep='\s+')
+    dat_df = pd.read_table(arg_dat_filepath, sep='\s+')
     dat_df.rename(columns={"Year": "year", "Month": "month", "Day": "day"}, inplace=True)
     dat_df.rename(columns={"Hour": "hour", "Minute": "minute", "Second": "second"}, inplace=True)
     dat_df['year'] = pd.to_datetime(dat_df[["year", "month", "day", "hour", "minute", "second"]], errors="coerce")
     dat_df.drop(dat_df.columns[1:6], axis=1, inplace=True)
     # dat_df.set_index('year', drop=True, inplace=True)
 
+    return dat_df
+
+
+def _read_argonaut_snr_file(arg_snr_filepath):
+    """
+    Read the Argonaut '.dat' file into a DataFrame.
+
+    :param arg_snr_filepath: Filepath containing the Argonaut '.dat' file
+    :return: Timestamp formatted DataFrame containing '.snr' file contents
+    """
+
     # Read the Argonaut '.snr' file into a DataFrame, combine first two rows to make column headers,
     # and remove unused datetime columns from the DataFrame.
-    arg_snr_file = os.path.join(data_path, filename + ".snr")
-    snr_df = pd.read_table(arg_snr_file, sep='\s+', header=None)
+    snr_df = pd.read_table(arg_snr_filepath, sep='\s+', header=None)
     header = snr_df.ix[0] + snr_df.ix[1]
     snr_df.columns = header.str.replace(r"\(.*\)", "")  # remove parentheses and everything inside them from headers
     snr_df = snr_df.ix[2:]
     snr_df.reset_index(drop=True, inplace=True)
     snr_df.drop(snr_df.columns[1:7], axis=1, inplace=True)
 
+    return snr_df
+
+
+def _read_argonaut_ctl_file(arg_ctl_filepath):
+    """
+    Read the Argonaut '.ctl' file into a configuration dictionary.
+
+    :param arg_ctl_filepath: Filepath containing the Argonaut '.dat' file
+    :return: Dictionary containing specific configuration parameters
+    """
+
     # Read specific configuration values from the Argonaut '.ctl' file into a dictionary.
     # The fixed formatting of the '.ctl' file is leveraged to extract values from foreknown file lines.
     config_dict = {}
-    arg_ctl_file = os.path.join(data_path, filename + ".ctl")
-    line = linecache.getline(arg_ctl_file, 10).strip()
+    line = linecache.getline(arg_ctl_filepath, 10).strip()
     arg_type = line.split("ArgType ------------------- ")[-1:]
 
     if arg_type == "SL":
@@ -46,46 +94,39 @@ def load_argonaut_data(data_path, filename):
     else:
         config_dict['Beam Orientation'] = "Vertical"
 
-    line = linecache.getline(arg_ctl_file, 12).strip()
+    line = linecache.getline(arg_ctl_filepath, 12).strip()
     frequency = line.split("Frequency ------- (kHz) --- ")[-1:]
     config_dict['Frequency'] = float(frequency[0])
 
     # calculate transducer radius (m)
     if float(frequency[0]) == 3000:
-        config_dict['Effective Diameter'] = 0.015
+        config_dict['Effective Transducer Diameter'] = 0.015
     elif float(frequency[0]) == 1500:
-        config_dict['Effective Diameter'] = 0.030
+        config_dict['Effective Transducer Diameter'] = 0.030
     elif float(frequency[0]) == 500:
-        config_dict['Effective Diameter'] = 0.090
+        config_dict['Effective Transducer Diameter'] = 0.090
     elif math.isnan(float(frequency[0])):
-        config_dict['Effective Diameter'] = "NaN"
+        config_dict['Effective Transducer Diameter'] = "NaN"
 
     config_dict['Number of Beams'] = 2  # always 2; no need to check file for value
 
-    line = linecache.getline(arg_ctl_file, 16).strip()
+    line = linecache.getline(arg_ctl_filepath, 16).strip()
     slant_angle = line.split("SlantAngle ------ (deg) --- ")[-1:]
     config_dict['Slant Angle'] = float(slant_angle[0])
 
-    line = linecache.getline(arg_ctl_file, 44).strip()
+    line = linecache.getline(arg_ctl_filepath, 44).strip()
     slant_angle = line.split("BlankDistance---- (m) ------ ")[-1:]
-    config_dict['Blank Distance'] = float(slant_angle[0])
+    config_dict['Blanking Distance'] = float(slant_angle[0])
 
-    line = linecache.getline(arg_ctl_file, 45).strip()
+    line = linecache.getline(arg_ctl_filepath, 45).strip()
     cell_size = line.split("CellSize -------- (m) ------ ")[-1:]
     config_dict['Cell Size'] = float(cell_size[0])
 
-    line = linecache.getline(arg_ctl_file, 46).strip()
+    line = linecache.getline(arg_ctl_filepath, 46).strip()
     number_cells = line.split("Number of Cells ------------ ")[-1:]
     config_dict['Number of Cells'] = float(number_cells[0])
 
-    # End reading '.ctl' file configuration values into dictionary
-
-    # Combine the '.snr' and '.dat.' DataFrames into a single acoustic DataFrame and return an
-    # instantiated ADVMData object
-    acoustic_df = pd.concat([snr_df, dat_df], axis=1)
-    acoustic_df.set_index('year', drop=True, inplace=True)
-
-    return ADVMData(config_dict, acoustic_df)
+    return config_dict
 
 
 def load_tab_delimited_data(data_path, filename):
