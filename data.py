@@ -179,7 +179,7 @@ class ADVMConfigParam(ADVMParam):
 
         # the valid for accessing information in the configuration parameters
         valid_keys = ['Frequency', 'Effective Transducer Diameter', 'Beam Orientation', 'Slant Angle',
-                      'Blanking Distance', 'Cell Size', 'Number of Cells']
+                      'Blanking Distance', 'Cell Size', 'Number of Cells', 'Number of Beams']
 
         # initial values for the configuration parameters
         init_values = np.tile(np.nan, (len(valid_keys),))
@@ -198,16 +198,17 @@ class ADVMConfigParam(ADVMParam):
 
         self._check_key(key)
 
-        other_keys = ['Frequency', 'Effective Transducer Diameter',  'Slant Angle', 'Blanking Distance', 'Cell Size']
+        other_keys = ['Frequency', 'Effective Transducer Diameter',  'Slant Angle', 'Blanking Distance',
+                      'Cell Size', 'Number of Beams']
 
         if key == "Beam Orientation" and (value == "Horizontal" or value == "Vertical"):
             return
-        elif key == "Number of Cells" and (1 <= value and isinstance(value, int)):
+        elif key == "Number of Cells" and (1 <= value and isinstance(value, (int, float))):
             return
         elif key in other_keys and 0 <= value and isinstance(value, (int, float)):
             return
         else:
-            raise ValueError(value)
+            raise ValueError(value, key)
 
 
 class ADVMData:
@@ -268,7 +269,9 @@ class ADVMData:
         :return: Mean sediment corrected backscatter for all observations contained in acoustic_df
         """
 
-        return pd.Series(index=self._acoustic_df.index.values)
+        scb = self.get_SCB()
+
+        return scb.mean(axis=0)
 
 
     def get_cell_range(self):
@@ -288,9 +291,9 @@ class ADVMData:
         """
 
         # check backscatter value to be used in calculation
-        if self._proc_dict["Backscatter Values"] == "Amp":
+        if self._proc_param["Backscatter Values"] == "Amp":
             calculated_df = self._calculate_MB("Amp")
-            calculated_df *= self._proc_dict["Intensity Scale Factor"]
+            calculated_df *= self._proc_param["Intensity Scale Factor"]
             return calculated_df
         else:
             calculated_df = self._calculate_MB("SNR")
@@ -319,10 +322,10 @@ class ADVMData:
             cell_df = backscatter_df.filter(regex=zero_pad_num)
 
             # select the beam number or calculate the average based on the processing parameter
-            if self._proc_dict["Beam"] == 1:
+            if self._proc_param["Beam"] == 1:
                 measured_backscatter_df['MB' + zero_pad_num] = pd.Series(cell_df[cell_df.columns[0]],
                                                                          index=self._acoustic_df.index)
-            elif self._proc_dict["Beam"] == 2:
+            elif self._proc_param["Beam"] == 2:
                 measured_backscatter_df['MB' + zero_pad_num] = pd.Series(cell_df[cell_df.columns[1]],
                                                                          index=self._acoustic_df.index)
             else:
@@ -351,12 +354,123 @@ class ADVMData:
 
     def get_WCB(self):
         """
-        Calculate water corrected backscatter. Throw exception if all required variables have not been provided
+        Calculate water corrected backscatter (WCB). Throw exception if all required variables have not been provided
 
         :return: Water corrected backscatter for all cells in the acoustic time series
         """
 
-        return pd.Series(index=self._acoustic_df.index.values)
+        alpha_w = self._calculate_alpha_w()
+        R = self._calculate_r()
+        psi = self._calculate_psi()
+
+        def func(x, y): return 2 * x * y  # PEP-8 did not like the lambda assignment statement style
+        tmp = np.apply_along_axis(func, 0, R, alpha_w)  # normalized range dependence
+
+        twoTL = 20*np.log10(psi * R) + tmp  # two-way transmission loss
+        mb = self.get_MB()  # measured backscatter values
+
+        # tmp_array is currently a numpy ndarray, so we convert it into a DataFrame before
+        # renaming the columns
+        tmp_array = mb.astype(float) + twoTL.astype(float)
+        wcb = pd.DataFrame(data=tmp_array)
+        wcb.rename(columns=lambda x: x.replace('MB', 'WCB'), inplace=True)
+
+        return wcb
+
+    def _calculate_alpha_w(self):
+        """
+        Calculate alpha_w - the water-absorption coefficient (WAC) in dB/m.
+
+        :return: alpha_w
+        """
+
+        ADVMTemp = self._acoustic_df['Temperature']
+
+        f_T = 21.9 * 10 ** (6 - 1520 / (ADVMTemp + 273))  # temperature-dependent relaxation frequency
+        alpha_w = 8.686 * 3.38e-6 * (self._config_param['Frequency'] ** 2) / f_T  # water attenuation coefficient
+
+        return alpha_w
+
+    def _calculate_alpha_s(self):
+        """
+        Calculate alpha_s - the sediment attenuation coefficient (SAC) in dB/m.
+
+        :return: alpha_s
+        """
+
+        return
+
+    def _calculate_rcrit(self):
+        """
+        Calculate Rcrit - the critical range (aka near zone distance), in meters.
+
+        :return: Rcrit
+        """
+
+        ADVMTemp = self._acoustic_df['Temperature']
+
+        # speed of sound in water (m/s) (Marczak 1997)
+        c = 1.402385 * 10 ** 3 + 5.038813 * ADVMTemp - \
+            (5.799136 * 10 ** -2) * ADVMTemp ** 2 + \
+            (3.287156 * 10 ** -4) * ADVMTemp ** 3 - \
+            (1.398845 * 10 ** -6) * ADVMTemp ** 4 + \
+            (2.787860 * 10 ** -9) * ADVMTemp ** 5
+
+        wavelength = c / (self._config_param['Frequency'] * 1e3)  # in meters (m)
+        at = self._config_param['Effective Transducer Diameter'] / 2
+
+        Rcrit = (np.pi * (at ** 2)) / wavelength
+
+        return Rcrit
+
+    def _calculate_r(self):
+        """
+        Calculate R - the mid-point distance along the beam.
+
+        :return: R
+        """
+
+        # Note: cell_size, first_cell, and last_cell must be cast as integers in order to be
+        # used as parameters in range(). They're stored as floats in the DataFrame so numpy
+        # can convert incompatible values to NaN.
+
+        cell_size = int(self._config_param['Cell Size'])
+
+        # first and last cell mid-point distance
+        first_cell = int(self._config_param['Blanking Distance'] + cell_size / 2)
+        last_cell = int(first_cell + (self._config_param['Number of Cells'] - 1) * cell_size)
+
+        # mid-point cell distance along the beam
+        if self._config_param['Number of Cells'] > 1:
+            R = np.array([range(first_cell, last_cell + 1, cell_size)])
+            R = R / np.cos(self._config_param['Slant Angle'] * (np.pi/180))  # convert slant angle to radians
+        else:
+            R = np.array([first_cell])
+
+        return R
+
+    def _calculate_psi(self):
+        """
+        Calculate psi - the near field correction coefficient.
+
+        :return: psi
+        """
+
+        Rcrit = self._calculate_rcrit()
+        R = self._calculate_r()
+
+        def func(x, y): return x / y  # PEP-8 did not like the lambda assignment statement style
+
+        Zz = np.apply_along_axis(func, 0, R, Rcrit)  # normalized range dependence
+
+        # "function which accounts for the departer of the backscatter signal from spherical spreading
+        #  in the near field of the transducer" Downing (1995)
+        if self._proc_param['Near Field Correction']:
+            psi = (1 + 1.35 * Zz + (2.5 * Zz) ** 3.2) / (1.35 * Zz + (2.5 * Zz) ** 3.2)
+        else:
+            psi = pd.Series(1, index=self._acoustic_df.index)
+
+        return psi
 
     def merge(self, other):
         """
