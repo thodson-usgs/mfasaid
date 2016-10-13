@@ -28,9 +28,10 @@ def load_argonaut_data(data_path, filename):
 
     # Combine the '.snr' and '.dat.' DataFrames into a single acoustic DataFrame, make the timestamp
     # the index, and return an instantiated ADVMData object
-    acoustic_df = pd.DataFrame(index=dat_df.index, data=(pd.concat([snr_df, dat_df], axis=1)))
-    acoustic_df.set_index('year', drop=True, inplace=True)
-    acoustic_df.index.names = ['Timestamp']
+    # acoustic_df = pd.DataFrame(index=dat_df.index, data=(pd.concat([snr_df, dat_df], axis=1)))
+    # acoustic_df.set_index('year', drop=True, inplace=True)
+    # acoustic_df.index.names = ['Timestamp']
+    acoustic_df = pd.concat([dat_df, snr_df], axis=1)
 
     return ADVMData(config_dict, acoustic_df)
 
@@ -43,14 +44,22 @@ def _read_argonaut_dat_file(arg_dat_filepath):
     :return: Timestamp formatted DataFrame containing '.dat' file contents
     """
 
-    # Read the Argonaut '.dat' file into a DataFrame and reformat the columns representing
-    # years, months, days, etc. into one new timestamp column.
+    # Read the Argonaut '.dat' file into a DataFrame
     dat_df = pd.read_table(arg_dat_filepath, sep='\s+')
-    dat_df.rename(columns={"Year": "year", "Month": "month", "Day": "day"}, inplace=True)
-    dat_df.rename(columns={"Hour": "hour", "Minute": "minute", "Second": "second"}, inplace=True)
-    dat_df['year'] = pd.to_datetime(dat_df[["year", "month", "day", "hour", "minute", "second"]], errors="coerce")
-    dat_df.drop(dat_df.columns[1:6], axis=1, inplace=True)
-    # dat_df.set_index('year', drop=True, inplace=True)
+
+    # rename the relevant columns to the standard/expected names
+    dat_df.rename(columns={"Temperature": "Temp", "Level": "Vbeam"}, inplace=True)
+
+    # set dataframe index by using date/time information
+    date_time_columns = ["Year", "Month", "Day", "Hour", "Minute", "Second"]
+    datetime_index = pd.to_datetime(dat_df[date_time_columns])
+    dat_df.set_index(datetime_index, inplace=True)
+
+    # remove non-relevant columns
+    relevant_columns = ['Temp', 'Vbeam']
+    dat_df = dat_df.filter(regex=r'(' + '|'.join(relevant_columns) + r')$')
+
+    dat_df.apply(pd.to_numeric)
 
     return dat_df
 
@@ -69,8 +78,25 @@ def _read_argonaut_snr_file(arg_snr_filepath):
     header = snr_df.ix[0] + snr_df.ix[1]
     snr_df.columns = header.str.replace(r"\(.*\)", "")  # remove parentheses and everything inside them from headers
     snr_df = snr_df.ix[2:]
-    snr_df.reset_index(drop=True, inplace=True)
-    snr_df.drop(snr_df.columns[1:7], axis=1, inplace=True)
+
+    # rename columns to recognizable date/time elements
+    column_names = list(snr_df.columns)
+    column_names[1] = 'Year'
+    column_names[2] = 'Month'
+    column_names[3] = 'Day'
+    column_names[4] = 'Hour'
+    column_names[5] = 'Minute'
+    column_names[6] = 'Second'
+    snr_df.columns = column_names
+
+    # create a datetime index and set the dataframe index
+    datetime_index = pd.to_datetime(snr_df.ix[:, 'Year':'Second'])
+    snr_df.set_index(datetime_index, inplace=True)
+
+    # remove non-relevant columns
+    snr_df = snr_df.filter(regex=r'(^Cell\d{2}(Amp|SNR)\d{1})$')
+
+    snr_df = snr_df.apply(pd.to_numeric)
 
     return snr_df
 
@@ -108,7 +134,7 @@ def _read_argonaut_ctl_file(arg_ctl_filepath):
     elif math.isnan(float(frequency[0])):
         config_dict['Effective Transducer Diameter'] = "NaN"
 
-    config_dict['Number of Beams'] = 2  # always 2; no need to check file for value
+    config_dict['Number of Beams'] = int(2)  # always 2; no need to check file for value
 
     line = linecache.getline(arg_ctl_filepath, 16).strip()
     slant_angle = line.split("SlantAngle ------ (deg) --- ")[-1:]
@@ -124,7 +150,7 @@ def _read_argonaut_ctl_file(arg_ctl_filepath):
 
     line = linecache.getline(arg_ctl_filepath, 46).strip()
     number_cells = line.split("Number of Cells ------------ ")[-1:]
-    config_dict['Number of Cells'] = float(number_cells[0])
+    config_dict['Number of Cells'] = int(number_cells[0])
 
     return config_dict
 
