@@ -260,6 +260,358 @@ class ADVMData:
         self._config_param.update(config_params)
         self._proc_param = ADVMProcParam(self._config_param["Number of Cells"])
 
+    def _apply_cell_range_filter(self, water_corrected_backscatter):
+        """
+
+        :param water_corrected_backscatter:
+        :return:
+        """
+
+        max_cell_range = self._proc_param['Maximum Cell Mid-Point Distance']
+        min_cell_range = self._proc_param['Minimum Cell Mid-Point Distance']
+
+        cell_range = self.get_cell_range().as_matrix()
+
+        cells_outside_set_range = (max_cell_range < cell_range) | (cell_range < min_cell_range)
+
+        water_corrected_backscatter[cells_outside_set_range] = np.nan
+
+        return water_corrected_backscatter
+
+    def _apply_minwcb_correction(self, water_corrected_backscatter):
+        """Remove the values of the cells including and beyond the cell with the minimum water corrected
+        backscatter value.
+
+        :param water_corrected_backscatter: Water corrected backscatter array
+        :return:
+        """
+
+        number_of_cells = self._config_param['Number of Cells']
+
+        # get the column index of the minimum value in each row
+        min_wcb_index = np.argmin(water_corrected_backscatter, axis=1)
+
+        # set the index back one to include cell with min wcb for samples that have a wcb with more than one valid cell
+        valid_index = (np.sum(~np.isnan(water_corrected_backscatter), axis=1) > 1) & (min_wcb_index > 0)
+        min_wcb_index[valid_index] -= 1
+
+        # get the flat index of the minimum values
+        index_array = np.array([np.arange(water_corrected_backscatter.shape[0]), min_wcb_index])
+        flat_index = np.ravel_multi_index(index_array, water_corrected_backscatter.shape)
+
+        # get a flat matrix of the cell ranges
+        cell_range_df = self.get_cell_range()
+        cell_range_mat = cell_range_df.as_matrix()
+        cell_range_flat = cell_range_mat.flatten()
+
+        # create an nobs x ncell array of the range of the minimum values
+        # where nobs is the number of observations and ncell is the number of cells
+        min_wcb_cell_range = cell_range_flat[flat_index]
+        min_wcb_cell_range = np.tile(min_wcb_cell_range.reshape((min_wcb_cell_range.shape[0], 1)),
+                                     (1, number_of_cells))
+
+        # get the index of the cells that are beyond the cell with the minimum wcb
+        wcb_gt_min_index = cell_range_mat > min_wcb_cell_range
+
+        # find the number of bad cells
+        number_of_bad_cells = np.sum(wcb_gt_min_index, 1)
+
+        # set the index of the observations with one bad cell to false
+        wcb_gt_min_index[number_of_bad_cells == 1, :] = False
+
+        # set the cells that are further away from the adjusted range to nan
+        water_corrected_backscatter[wcb_gt_min_index] = np.nan
+
+        return water_corrected_backscatter
+
+    @staticmethod
+    def _calc_alpha_w(temperature, frequency):
+        """Calculate alpha_w - the water-absorption coefficient (WAC) in dB/m.
+
+        :return: alpha_w
+        """
+
+        assert isinstance(temperature, np.ndarray) and isinstance(frequency, np.ndarray)
+
+        f_T = 21.9 * 10 ** (6 - 1520 / (temperature + 273))  # temperature-dependent relaxation frequency
+        alpha_w = 8.686 * 3.38e-6 * (frequency ** 2) / f_T  # water attenuation coefficient
+
+        return alpha_w
+
+    @classmethod
+    def _calc_geometric_loss(cls, cell_range, **kwargs):
+        """Calculate the geometric two-way transmission loss due to spherical beam spreading
+
+        :param cell_range: Array of range of cells, in meters
+        :param **kwargs
+            See below
+
+        :Keyword Arguments:
+            * *temperature* --
+                Temperature, in Celsius
+            * *frequency* --
+                Frequency, in kilohertz
+            * *trans_rad* --
+                Transducer radius, in meters
+
+        :return:
+        """
+
+        nearfield_corr = kwargs.pop('nearfield_corr', False)
+
+        if nearfield_corr:
+
+            temperature = kwargs['temperature']
+            frequency = kwargs['frequency']
+            trans_rad = kwargs['trans_rad']
+
+            speed_of_sound = cls._calc_speed_of_sound(temperature)
+            wavelength = cls._calc_wavelength(speed_of_sound, frequency)
+            r_crit = cls._calc_rcrit(wavelength, trans_rad)
+            psi = cls._calc_psi(r_crit, cell_range)
+
+            geometric_loss = 20 * np.log10(psi * cell_range)
+
+        else:
+
+            geometric_loss = 20 * np.log10(cell_range)
+
+        return geometric_loss
+
+    @staticmethod
+    def _calc_psi(r_crit, cell_range):
+        """Calculate psi - the near field correction coefficient.
+
+        "Function which accounts for the departure of the backscatter signal from spherical spreading
+        in the near field of the transducer" Downing (1995)
+
+        :param r_crit: Array containing critical range
+        :param cell_range: Array containing the mid-point distances of all of the cells
+        :return: psi
+        """
+
+        number_of_cells = cell_range.shape[1]
+
+        try:
+            Zz = cell_range / np.tile(r_crit, (1, number_of_cells))
+        except ValueError:
+            r_crit = np.expand_dims(r_crit, axis=1)
+            Zz = cell_range / np.tile(r_crit, (1, number_of_cells))
+
+        psi = (1 + 1.35 * Zz + (2.5 * Zz) ** 3.2) / (1.35 * Zz + (2.5 * Zz) ** 3.2)
+
+        return psi
+
+    @staticmethod
+    def _calc_rcrit(wavelength, trans_rad):
+        """
+        Calculate the critical distance from the transducer
+
+        :param wavelength: Array containing wavelength, in meters
+        :param trans_rad: Scalar radius of transducer, in meters
+        :return:
+        """
+
+        r_crit = (np.pi * (trans_rad ** 2)) / wavelength
+
+        return r_crit
+
+    @staticmethod
+    def _calc_sac(wcb, cell_range):
+        """Calculate the sediment attenuation coefficient (SAC) in dB/m.
+
+        :return: sac array
+        """
+
+        # make sure both matrices are the same shape
+        assert wcb.shape == cell_range.shape
+
+        # create an empty nan matrix for the SAC
+        sac_arr = np.tile(np.nan, (wcb.shape[0],))
+
+        # iterate over all rows
+        for row_index in np.arange(wcb.shape[0]):
+
+            # find the column indices that are valid
+            fit_index = ~np.isnan(wcb[row_index, :])
+
+            # if there are more than one valid cells, calculate the slope
+            if np.sum(fit_index) > 1:
+
+                # find the slope of the WCB with respect to the cell range
+                x = cell_range[row_index, fit_index]
+                y = wcb[row_index, fit_index]
+                xy_mean = np.mean(x * y)
+                x_mean = np.mean(x)
+                y_mean = np.mean(y)
+                cov_xy = xy_mean - x_mean * y_mean
+                var_x = np.var(x)
+                slope = cov_xy / var_x
+
+            else:
+                continue
+
+            # calculate the SAC
+            sac_arr[row_index] = -0.5 * slope
+
+        return sac_arr
+
+    @staticmethod
+    def _calc_scb(wcb, sac, cell_range):
+        """
+
+        :param wcb:
+        :param sac:
+        :return:
+        """
+        try:
+            scb = wcb + 2 * np.tile(sac, (1, cell_range.shape[1])) * cell_range
+        except ValueError:
+            sac = np.expand_dims(sac, axis=1)
+            scb = wcb + 2 * np.tile(sac, (1, cell_range.shape[1])) * cell_range
+
+        return scb
+
+    @staticmethod
+    def _calc_speed_of_sound(temperature):
+        """Calculate the speed of sound in water (in meters per second) based on Marczak, 1997
+
+        :param temperature: Array of temperature values, in degrees Celsius
+        :return: speed_of_sound: Speed of sound in meters per second
+        """
+
+        speed_of_sound = 1.402385 * 10 ** 3 + 5.038813 * temperature - \
+                         (5.799136 * 10 ** -2) * temperature ** 2 + \
+                         (3.287156 * 10 ** -4) * temperature ** 3 - \
+                         (1.398845 * 10 ** -6) * temperature ** 4 + \
+                         (2.787860 * 10 ** -9) * temperature ** 5
+
+        return speed_of_sound
+
+    @classmethod
+    def _calc_water_absorption_loss(cls, temperature, frequency, cell_range):
+        """
+
+        :param temperature:
+        :param frequency:
+        :param cell_range:
+        :return:
+        """
+
+        alpha_w = np.array(cls._calc_alpha_w(temperature, frequency))
+
+        number_of_cells = cell_range.shape[1]
+
+        try:
+            water_absorption_loss = 2 * np.tile(alpha_w, (1, number_of_cells)) * cell_range
+        except ValueError:
+            alpha_w = np.expand_dims(alpha_w, axis=1)
+            water_absorption_loss = 2 * np.tile(alpha_w, (1, number_of_cells)) * cell_range
+
+        return water_absorption_loss
+
+    @staticmethod
+    def _calc_wavelength(speed_of_sound, frequency):
+        """Calculate the wavelength of an acoustic signal.
+
+        :param speed_of_sound: Array containing the speed of sound in meters per second
+        :param frequency: Scalar containing acoustic frequency in kHz
+        :return:
+        """
+
+        wavelength = speed_of_sound / (frequency * 1e3)
+
+        return wavelength
+
+    @classmethod
+    def _calc_wcb(cls, mb, temperature, frequency, cell_range, trans_rad, nearfield_corr):
+        """
+        Calculate the water corrected backscatter. Include the geometric loss due to spherical spreading.
+
+        :param mb: Measured backscatter, in decibels
+        :param temperature: Temperature, in Celsius
+        :param frequency: Frequency, in kilohertz
+        :param cell_range: Mid-point cell range, in meters
+        :param trans_rad: Transducer radius, in meters
+        :param nearfield_corr: Flag to use nearfield_correction
+        :return:
+        """
+
+        geometric_loss = cls._calc_geometric_loss(cell_range,
+                                                  temperature=temperature,
+                                                  frequency=frequency,
+                                                  trans_rad=trans_rad,
+                                                  nearfield_corr=nearfield_corr)
+
+        water_absorption_loss = cls._calc_water_absorption_loss(temperature, frequency, cell_range)
+
+        two_way_transmission_loss = geometric_loss + water_absorption_loss
+
+        wcb = mb + two_way_transmission_loss
+
+        return wcb
+
+    def _get_mb_array(self, backscatter_values, beam_number):
+        """Extract measured backscatter values from the acoustic data frame.
+
+        :param backscatter_values: Backscatter values to return. 'SNR' or 'Amp'
+        :param beam_number: Beam number to extract
+        :return: Dataframe containing backscatter from the requested beam
+        """
+
+        assert type(backscatter_values) is str and type(beam_number) is int
+
+        number_of_cells = int(self._config_param['Number of Cells'])
+        number_of_obs = self._acoustic_df.shape[0]
+
+        # create an number_of_obs by number_of_cells array of NaNs
+        backscatter_array = np.tile(np.nan, (number_of_obs, number_of_cells))
+
+        # create a data frame with the nan values as the data
+        mb_column_names = ['MB{:03}'.format(cell) for cell in range(1, number_of_cells + 1)]
+        mb_df = pd.DataFrame(index=self._acoustic_df.index, data=backscatter_array, columns=mb_column_names)
+
+        # go through each cell and fill the data from the acoustic data frame
+        # skip the cell and leave the values nan if the cell hasn't been loaded
+        for cell in range(1, number_of_cells + 1):
+
+            # the patern of the columns to search for
+            # col_pattern = r'(^Cell\d{2}(' + backscatter_values + str(beam_number) + r'))$'
+            # backscatter_df = self._acoustic_df.filter(regex=col_pattern)
+
+            # get the column names for the backscatter in each dataframe
+            arg_col_name = r'Cell{:02}{}{:1}'.format(cell, backscatter_values, beam_number)
+            mb_col_name = r'MB{:03}'.format(cell)
+
+            # try to fill the columns
+            # if fail, continue and leave the values nan
+            try:
+                mb_df.ix[:, mb_col_name] = self._acoustic_df.ix[:, arg_col_name]
+            except KeyError as err:
+                if err.args[0] == arg_col_name:
+                    continue
+                else:
+                    raise err
+
+        return mb_df
+
+    def _remove_min_vbeam(self, water_corrected_backscatter):
+        """Remove observations that have a vertical beam value that are below the set threshold.
+
+        :param water_corrected_backscatter: Water corrected backscatter array
+        :return:
+        """
+
+        vbeam = self._acoustic_df['Vbeam'].as_matrix()
+
+        min_vbeam = self._proc_param['Minimum Vbeam']
+
+        index_below_min_vbeam = (vbeam < min_vbeam)
+
+        water_corrected_backscatter[index_below_min_vbeam, :] = np.nan
+
+        return water_corrected_backscatter
+
     def add_data(self, other, keep_curr_obs=None):
         """Merges self and other ADVMData objects. Throws exception if other ADVMData object is incompatible with self.
 
@@ -292,8 +644,8 @@ class ADVMData:
             # cast to keep PyCharm from complaining
             self._acoustic_df = pd.DataFrame(pd.concat([self._acoustic_df, other._acoustic_df],
                                                        verify_integrity=verify_integrity))
-            self._acoustic_df.sort_index(inplace=True, kind='mergesort')
-            self._acoustic_df.drop_duplicates(keep=keep, inplace=True)
+            self._acoustic_df.drop_duplicates(subset='rownum', keep=keep, inplace=True)
+            self._acoustic_df.sort_index(inplace=True)
 
         else:
 
@@ -404,21 +756,6 @@ class ADVMData:
 
         return self._proc_param.get_dict()
 
-    def set_proc_params(self, proc_params):
-        """Sets the processing parameters based on user input.
-
-        :param proc_params: Dictionary containing configuration parameters
-        :return: Nothing
-        """
-
-        if not isinstance(proc_params, dict):
-            raise TypeError('proc_params must be type dict')
-
-        for key in proc_params.keys():
-            self._proc_param[key] = proc_params[key]
-
-        return
-
     def get_sac(self):
         """Calculate sediment attenuation coefficient. Throw exception if all required variables have not been provided.
 
@@ -431,7 +768,7 @@ class ADVMData:
         wcb_arr = wcb.as_matrix()
         cell_range_arr = cell_range.as_matrix()
 
-        sac_arr = ADVMData._calc_sac(wcb_arr, cell_range_arr)
+        sac_arr = self._calc_sac(wcb_arr, cell_range_arr)
 
         sac = pd.DataFrame(index=wcb.index, data=sac_arr, columns=['SAC'])
 
@@ -450,8 +787,8 @@ class ADVMData:
         wcb = self.get_wcb().as_matrix()
 
         # calculate sediment attenuation coefficient and sediment corrected backscatter
-        sac = ADVMData._calc_sac(wcb, cell_range)
-        scb = ADVMData._calc_scb(wcb, sac, cell_range)
+        sac = self._calc_sac(wcb, cell_range)
+        scb = self._calc_scb(wcb, sac, cell_range)
 
         # create DateFrame to return
         index = self._acoustic_df.index
@@ -474,7 +811,7 @@ class ADVMData:
 
         measured_backscatter = self.get_mb().as_matrix()  # measured backscatter values
 
-        water_corrected_backscatter = ADVMData._calc_wcb(measured_backscatter, temperature, frequency, cell_range,
+        water_corrected_backscatter = self._calc_wcb(measured_backscatter, temperature, frequency, cell_range,
                                                          trans_rad, nearfield_corr)
 
         # adjust the water corrected backscatter profile
@@ -492,355 +829,20 @@ class ADVMData:
 
         return wcb
 
-    def _apply_cell_range_filter(self, water_corrected_backscatter):
+    def set_proc_params(self, proc_params):
+        """Sets the processing parameters based on user input.
+
+        :param proc_params: Dictionary containing configuration parameters
+        :return: Nothing
         """
 
-        :param water_corrected_backscatter:
-        :return:
-        """
+        if not isinstance(proc_params, dict):
+            raise TypeError('proc_params must be type dict')
 
-        max_cell_range = self._proc_param['Maximum Cell Mid-Point Distance']
-        min_cell_range = self._proc_param['Minimum Cell Mid-Point Distance']
+        for key in proc_params.keys():
+            self._proc_param[key] = proc_params[key]
 
-        cell_range = self.get_cell_range().as_matrix()
-
-        cells_outside_set_range = (max_cell_range < cell_range) | (cell_range < min_cell_range)
-
-        water_corrected_backscatter[cells_outside_set_range] = np.nan
-
-        return water_corrected_backscatter
-
-    def _apply_minwcb_correction(self, water_corrected_backscatter):
-        """Remove the values of the cells including and beyond the cell with the minimum water corrected
-        backscatter value.
-
-        :param water_corrected_backscatter: Water corrected backscatter array
-        :return:
-        """
-
-        number_of_cells = self._config_param['Number of Cells']
-
-        # get the column index of the minimum value in each row
-        min_wcb_index = np.argmin(water_corrected_backscatter, axis=1)
-
-        # set the index back one to include cell with min wcb for samples that have a wcb with more than one valid cell
-        valid_index = (np.sum(~np.isnan(water_corrected_backscatter), axis=1) > 1) & (min_wcb_index > 0)
-        min_wcb_index[valid_index] -= 1
-
-        # get the flat index of the minimum values
-        index_array = np.array([np.arange(water_corrected_backscatter.shape[0]), min_wcb_index])
-        flat_index = np.ravel_multi_index(index_array, water_corrected_backscatter.shape)
-
-        # get a flat matrix of the cell ranges
-        cell_range_df = self.get_cell_range()
-        cell_range_mat = cell_range_df.as_matrix()
-        cell_range_flat = cell_range_mat.flatten()
-
-        # create an nobs x ncell array of the range of the minimum values
-        # where nobs is the number of observations and ncell is the number of cells
-        min_wcb_cell_range = cell_range_flat[flat_index]
-        min_wcb_cell_range = np.tile(min_wcb_cell_range.reshape((min_wcb_cell_range.shape[0], 1)),
-                                     (1, number_of_cells))
-
-        # get the index of the cells that are beyond the cell with the minimum wcb
-        wcb_gt_min_index = cell_range_mat > min_wcb_cell_range
-
-        # find the number of bad cells
-        number_of_bad_cells = np.sum(wcb_gt_min_index, 1)
-
-        # set the index of the observations with one bad cell to false
-        wcb_gt_min_index[number_of_bad_cells == 1, :] = False
-
-        # set the cells that are further away from the adjusted range to nan
-        water_corrected_backscatter[wcb_gt_min_index] = np.nan
-
-        return water_corrected_backscatter
-
-    def _get_mb_array(self, backscatter_values, beam_number):
-        """Extract measured backscatter values from the acoustic data frame.
-
-        :param backscatter_values: Backscatter values to return. 'SNR' or 'Amp'
-        :param beam_number: Beam number to extract
-        :return: Dataframe containing backscatter from the requested beam
-        """
-
-        assert type(backscatter_values) is str and type(beam_number) is int
-
-        number_of_cells = int(self._config_param['Number of Cells'])
-        number_of_obs = self._acoustic_df.shape[0]
-
-        # create an number_of_obs by number_of_cells array of NaNs
-        backscatter_array = np.tile(np.nan, (number_of_obs, number_of_cells))
-
-        # create a data frame with the nan values as the data
-        mb_column_names = ['MB{:03}'.format(cell) for cell in range(1, number_of_cells + 1)]
-        mb_df = pd.DataFrame(index=self._acoustic_df.index, data=backscatter_array, columns=mb_column_names)
-
-        # go through each cell and fill the data from the acoustic data frame
-        # skip the cell and leave the values nan if the cell hasn't been loaded
-        for cell in range(1, number_of_cells+1):
-
-            # the patern of the columns to search for
-            # col_pattern = r'(^Cell\d{2}(' + backscatter_values + str(beam_number) + r'))$'
-            # backscatter_df = self._acoustic_df.filter(regex=col_pattern)
-
-            # get the column names for the backscatter in each dataframe
-            arg_col_name = r'Cell{:02}{}{:1}'.format(cell, backscatter_values, beam_number)
-            mb_col_name = r'MB{:03}'.format(cell)
-
-            # try to fill the columns
-            # if fail, continue and leave the values nan
-            try:
-                mb_df.ix[:, mb_col_name] = self._acoustic_df.ix[:, arg_col_name]
-            except KeyError as err:
-                if err.args[0] == arg_col_name:
-                    continue
-                else:
-                    raise err
-
-        return mb_df
-
-    def _remove_min_vbeam(self, water_corrected_backscatter):
-        """Remove observations that have a vertical beam value that are below the set threshold.
-
-        :param water_corrected_backscatter: Water corrected backscatter array
-        :return:
-        """
-
-        vbeam = self._acoustic_df['Vbeam'].as_matrix()
-
-        min_vbeam = self._proc_param['Minimum Vbeam']
-
-        index_below_min_vbeam = (vbeam < min_vbeam)
-
-        water_corrected_backscatter[index_below_min_vbeam, :] = np.nan
-
-        return water_corrected_backscatter
-
-    @staticmethod
-    def _calc_alpha_w(temperature, frequency):
-        """Calculate alpha_w - the water-absorption coefficient (WAC) in dB/m.
-
-        :return: alpha_w
-        """
-
-        f_T = 21.9 * 10 ** (6 - 1520 / (temperature + 273))  # temperature-dependent relaxation frequency
-        alpha_w = 8.686 * 3.38e-6 * (frequency ** 2) / f_T  # water attenuation coefficient
-
-        return alpha_w
-
-    @staticmethod
-    def _calc_geometric_loss(cell_range, **kwargs):
-        """Calculate the geometric two-way transmission loss due to spherical beam spreading
-
-        :param cell_range: Array of range of cells, in meters
-        :param **kwargs
-            See below
-
-        :Keyword Arguments:
-            * *temperature* --
-                Temperature, in Celsius
-            * *frequency* --
-                Frequency, in kilohertz
-            * *trans_rad* --
-                Transducer radius, in meters
-
-        :return:
-        """
-
-        nearfield_corr = kwargs.pop('nearfield_corr', False)
-
-        if nearfield_corr:
-
-            temperature = kwargs['temperature']
-            frequency = kwargs['frequency']
-            trans_rad = kwargs['trans_rad']
-
-            speed_of_sound = ADVMData._calc_speed_of_sound(temperature)
-            wavelength = ADVMData._calc_wavelength(speed_of_sound, frequency)
-            r_crit = ADVMData._calc_rcrit(wavelength, trans_rad)
-            psi = ADVMData._calc_psi(r_crit, cell_range)
-
-            geometric_loss = 20 * np.log10(psi * cell_range)
-
-        else:
-
-            geometric_loss = 20 * np.log10(cell_range)
-
-        return geometric_loss
-
-    @staticmethod
-    def _calc_psi(r_crit, cell_range):
-        """Calculate psi - the near field correction coefficient.
-
-        "Function which accounts for the departure of the backscatter signal from spherical spreading
-        in the near field of the transducer" Downing (1995)
-
-        :param r_crit: Array containing critical range
-        :param cell_range: Array containing the mid-point distances of all of the cells
-        :return: psi
-        """
-
-        number_of_cells = cell_range.shape[1]
-
-        try:
-            Zz = cell_range / np.tile(r_crit, (1, number_of_cells))
-        except ValueError:
-            r_crit = np.expand_dims(r_crit, axis=1)
-            Zz = cell_range / np.tile(r_crit, (1, number_of_cells))
-
-        psi = (1 + 1.35 * Zz + (2.5 * Zz) ** 3.2) / (1.35 * Zz + (2.5 * Zz) ** 3.2)
-
-        return psi
-
-    @staticmethod
-    def _calc_rcrit(wavelength, trans_rad):
-        """
-        Calculate the critical distance from the transducer
-
-        :param wavelength: Array containing wavelength, in meters
-        :param trans_rad: Scalar radius of transducer, in meters
-        :return:
-        """
-
-        r_crit = (np.pi * (trans_rad ** 2)) / wavelength
-
-        return r_crit
-
-    @staticmethod
-    def _calc_sac(wcb, cell_range):
-        """Calculate the sediment attenuation coefficient (SAC) in dB/m.
-
-        :return: sac array
-        """
-
-        # make sure both matrices are the same shape
-        assert wcb.shape == cell_range.shape
-
-        # create an empty nan matrix for the SAC
-        sac_arr = np.tile(np.nan, (wcb.shape[0],))
-
-        # iterate over all rows
-        for row_index in np.arange(wcb.shape[0]):
-
-            # find the column indices that are valid
-            fit_index = ~np.isnan(wcb[row_index, :])
-
-            # if there are more than one valid cells, calculate the slope
-            if np.sum(fit_index) > 1:
-
-                # find the slope of the WCB with respect to the cell range
-                x = cell_range[row_index, fit_index]
-                y = wcb[row_index, fit_index]
-                xy_mean = np.mean(x * y)
-                x_mean = np.mean(x)
-                y_mean = np.mean(y)
-                cov_xy = xy_mean - x_mean * y_mean
-                var_x = np.var(x)
-                slope = cov_xy/var_x
-
-            else:
-                continue
-
-            # calculate the SAC
-            sac_arr[row_index] = -0.5 * slope
-
-        return sac_arr
-
-    @staticmethod
-    def _calc_scb(wcb, sac, cell_range):
-        """
-
-        :param wcb:
-        :param sac:
-        :return:
-        """
-        try:
-            scb = wcb + 2 * np.tile(sac, (1, cell_range.shape[1])) * cell_range
-        except ValueError:
-            sac = np.expand_dims(sac, axis=1)
-            scb = wcb + 2 * np.tile(sac, (1, cell_range.shape[1])) * cell_range
-
-        return scb
-
-    @staticmethod
-    def _calc_speed_of_sound(temperature):
-        """Calculate the speed of sound in water (in meters per second) based on Marczak, 1997
-
-        :param temperature: Array of temperature values, in degrees Celsius
-        :return: speed_of_sound: Speed of sound in meters per second
-        """
-
-        speed_of_sound = 1.402385 * 10 ** 3 + 5.038813 * temperature - \
-            (5.799136 * 10 ** -2) * temperature ** 2 + \
-            (3.287156 * 10 ** -4) * temperature ** 3 - \
-            (1.398845 * 10 ** -6) * temperature ** 4 + \
-            (2.787860 * 10 ** -9) * temperature ** 5
-
-        return speed_of_sound
-
-    @staticmethod
-    def _calc_water_absorption_loss(temperature, frequency, cell_range):
-        """
-
-        :param temperature:
-        :param frequency:
-        :param cell_range:
-        :return:
-        """
-
-        alpha_w = np.array(ADVMData._calc_alpha_w(temperature, frequency))
-
-        number_of_cells = cell_range.shape[1]
-
-        try:
-            water_absorption_loss = 2 * np.tile(alpha_w, (1, number_of_cells)) * cell_range
-        except ValueError:
-            alpha_w = np.expand_dims(alpha_w, axis=1)
-            water_absorption_loss = 2 * np.tile(alpha_w, (1, number_of_cells)) * cell_range
-
-        return water_absorption_loss
-
-    @staticmethod
-    def _calc_wavelength(speed_of_sound, frequency):
-        """Calculate the wavelength of an acoustic signal.
-
-        :param speed_of_sound: Array containing the speed of sound in meters per second
-        :param frequency: Scalar containing acoustic frequency in kHz
-        :return:
-        """
-
-        wavelength = speed_of_sound / (frequency * 1e3)
-
-        return wavelength
-
-    @staticmethod
-    def _calc_wcb(mb, temperature, frequency, cell_range, trans_rad, nearfield_corr):
-        """
-        Calculate the water corrected backscatter. Include the geometric loss due to spherical spreading.
-
-        :param mb: Measured backscatter, in decibels
-        :param temperature: Temperature, in Celsius
-        :param frequency: Frequency, in kilohertz
-        :param cell_range: Mid-point cell range, in meters
-        :param trans_rad: Transducer radius, in meters
-        :param nearfield_corr: Flag to use nearfield_correction
-        :return:
-        """
-
-        geometric_loss = ADVMData._calc_geometric_loss(cell_range,
-                                                       temperature=temperature,
-                                                       frequency=frequency,
-                                                       trans_rad=trans_rad,
-                                                       nearfield_corr=nearfield_corr)
-
-        water_absorption_loss = ADVMData._calc_water_absorption_loss(temperature, frequency, cell_range)
-
-        two_way_transmission_loss = geometric_loss + water_absorption_loss
-
-        wcb = mb + two_way_transmission_loss
-
-        return wcb
+        return
 
 
 class RawAcousticDataContainer:
