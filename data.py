@@ -254,8 +254,10 @@ class ADVMData:
         :param acoustic_df: DataFrame containing acoustic data
         """
 
-        # self._acoustic_df = copy.deepcopy(acoustic_df)
+        # TODO: Extract only columns with acoustic variables
+
         self._acoustic_df = acoustic_df.copy(deep=True)
+        self._acoustic_df.index.name = 'DateTime'
         self._config_param = ADVMConfigParam()
         self._config_param.update(config_params)
         self._proc_param = ADVMProcParam(self._config_param["Number of Cells"])
@@ -264,7 +266,7 @@ class ADVMData:
         """
 
         :param water_corrected_backscatter:
-        :return:
+        :return: Water corrected backscatter with cell range filter applied
         """
 
         max_cell_range = self._proc_param['Maximum Cell Mid-Point Distance']
@@ -331,7 +333,7 @@ class ADVMData:
         :return: alpha_w
         """
 
-        assert isinstance(temperature, np.ndarray) and isinstance(frequency, np.ndarray)
+        assert isinstance(temperature, np.ndarray) and isinstance(frequency, float)
 
         f_T = 21.9 * 10 ** (6 - 1520 / (temperature + 273))  # temperature-dependent relaxation frequency
         alpha_w = 8.686 * 3.38e-6 * (frequency ** 2) / f_T  # water attenuation coefficient
@@ -633,19 +635,24 @@ class ADVMData:
 
             if keep_curr_obs is None:
                 verify_integrity = True
-                keep = 'first'
-            elif keep_curr_obs:
-                verify_integrity = False
-                keep = 'first'
             else:
                 verify_integrity = False
-                keep = 'last'
 
             # cast to keep PyCharm from complaining
             self._acoustic_df = pd.DataFrame(pd.concat([self._acoustic_df, other._acoustic_df],
                                                        verify_integrity=verify_integrity))
-            self._acoustic_df.drop_duplicates(subset='rownum', keep=keep, inplace=True)
-            self._acoustic_df.sort_index(inplace=True)
+
+            # self._acoustic_df.drop_duplicates(subset='rownum', keep=keep, inplace=True)
+
+            # self._acoustic_df.sort_index(inplace=True)
+
+            grouped = self._acoustic_df.groupby(level=0)
+
+            if keep_curr_obs:
+                self._acoustic_df = grouped.first()
+            else:
+                self._acoustic_df = grouped.last()
+
 
         else:
 
@@ -786,9 +793,17 @@ class ADVMData:
         # get the water corrected backscatter, with corrections specific to this instance of ADVMData
         wcb = self.get_wcb().as_matrix()
 
+        # TODO: Replace NaN in single-celled observations with the WCB value
+
         # calculate sediment attenuation coefficient and sediment corrected backscatter
         sac = self._calc_sac(wcb, cell_range)
         scb = self._calc_scb(wcb, sac, cell_range)
+
+        # row index of all single-cell wcb observations
+        single_cell_index = np.sum(~np.isnan(wcb), axis=1) == 1
+
+        # replace NaN in single-cell observations with the WCB value
+        scb[single_cell_index, :] = wcb[single_cell_index, :]
 
         # create DateFrame to return
         index = self._acoustic_df.index
