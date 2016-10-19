@@ -254,12 +254,25 @@ class ADVMData:
         :param acoustic_df: DataFrame containing acoustic data
         """
 
-        # TODO: Extract only columns with acoustic variables
+        if not isinstance(acoustic_df.index, pd.tseries.index.DatetimeIndex):
+            raise ValueError("Acoustic DataFrame index must be of type pandas.tseries.index.DatetimeIndex")
 
-        self._acoustic_df = acoustic_df.copy(deep=True)
+        # define regex filter to find ADVM data columns
+        advm_column_filter = r'(^(Temp|Vbeam|Cell\d{2}(Amp|SNR)\d{1}))$'
+
+        # get only the ADVM data from the passed dataframe
+        self._acoustic_df = acoustic_df.filter(regex=advm_column_filter)
+
+        # rename the index column
         self._acoustic_df.index.name = 'DateTime'
+
+        # initialize a configuration parameter object
         self._config_param = ADVMConfigParam()
+
+        # update the configuration parameters
         self._config_param.update(config_params)
+
+        # initialize a processing parameter object
         self._proc_param = ADVMProcParam(self._config_param["Number of Cells"])
 
     def _apply_cell_range_filter(self, water_corrected_backscatter):
@@ -628,7 +641,7 @@ class ADVMData:
 
         # check type of keep_curr_obs
         if (keep_curr_obs is not None) and not (isinstance(keep_curr_obs, bool)):
-            raise TypeError('keep_curr_obs type must be NoneType or bool')
+            raise TypeError('keep_curr_obs type must be None or bool')
 
         # test compatibility of other data set
         if self._config_param.is_compatible(other.get_config_params()):
@@ -652,7 +665,6 @@ class ADVMData:
                 self._acoustic_df = grouped.first()
             else:
                 self._acoustic_df = grouped.last()
-
 
         else:
 
@@ -793,8 +805,6 @@ class ADVMData:
         # get the water corrected backscatter, with corrections specific to this instance of ADVMData
         wcb = self.get_wcb().as_matrix()
 
-        # TODO: Replace NaN in single-celled observations with the WCB value
-
         # calculate sediment attenuation coefficient and sediment corrected backscatter
         sac = self._calc_sac(wcb, cell_range)
         scb = self._calc_scb(wcb, sac, cell_range)
@@ -872,98 +882,98 @@ class RawAcousticDataContainer:
         # initialize _acoustic_data as empty dictionary
         self._acoustic_data = {}
 
-    def add_data(self, new_advm_data):
-        """Add acoustic data to container."""
+    def _validate_frequencies(self, frequencies):
+        """Validate frequencies passed to a function for type and value.
+
+        :param frequencies:
+         :type frequencies: list
+        :return:
+        """
+
+        if not isinstance(frequencies, list):
+            raise TypeError("frequencies must be of type list")
+
+        for freq in frequencies:
+            if not isinstance(freq, float):
+                raise TypeError("Frequencies must be of type float")
+            if freq not in self._acoustic_data.keys():
+                raise ValueError("Invalid frequency: " + str(freq))
+
+    def add_data(self, new_advm_data, keep_curr_obs=None):
+        """
+
+        :param new_advm_data:
+         :type new_advm_data: ADVMData
+        :param keep_curr_obs:
+        :return:
+        """
 
         # get the frequency of the ADVM data set
         frequency = new_advm_data.get_config_params()['Frequency']
 
         # if a data set with the frequency is already loaded,
         if frequency in self._acoustic_data.keys():
-            self._acoustic_data[frequency].merge(new_advm_data)
+            self._acoustic_data[frequency].add_data(new_advm_data, keep_curr_obs=keep_curr_obs)
 
         else:
             self._acoustic_data[frequency] = new_advm_data
 
-    def get_cell_range(self, frequency):
-        """Return the cell range for the acoustic data set described
-        by frequency.
+    def get_advm_data(self, frequency):
+        """Return the ADVMData instance that contains the passed frequency.
+
+        :param frequency:
+        :type frequency: float
+        :return:
         """
 
-        # return the cell range
-        return self._acoustic_data[frequency].get_cell_range()
+        return self._acoustic_data[frequency]
 
-    def get_config_params(self, frequency):
-        """Return the configuration parameters of an acoustic data
-        structure.
-        """
-
-        # return the configuration parameters described by config_params
-        return self._acoustic_data[frequency].get_config_params()
-
-    def get_freqs(self):
+    def get_frequencies(self):
         """Return the acoustic frequencies of the contained data."""
 
-        return self._acoustic_data.keys()
+        return list(self._acoustic_data.keys())
 
-    def get_meanSCB(self, frequencies='All'):
-        """Return the mean sediment corrected backscatter (SCB)
-        time series.
+    def get_mean_scb(self, frequencies):
         """
 
-        # get all contained frequencies if requested
-        if frequencies == 'All':
-            frequencies = self.get_freqs()
+        :param frequencies: List of frequencies to calculate
+        :type frequencies: list
+        :return: DataFrame containing calculated mean sediment corrected backscatter values
+        """
+
+        self._validate_frequencies(frequencies)
 
         # create empty DataFrame
-        meanSCB = pd.DataFrame()
-
-        # assert that frequencies is a list
-        assert (isinstance(frequencies, list))
+        mean_scb = pd.DataFrame()
 
         for freq in frequencies:
             advm_data = self._acoustic_data[freq]
-            tmp_meanSCB = advm_data.get_meanSCB()
-            tmp_meanSCB.columns = ['meanSCB' + freq]
-            meanSCB = meanSCB.join(tmp_meanSCB, how='outer', sort=True)
+            tmp_mean_scb = advm_data.get_mean_scb()
+            tmp_mean_scb.columns = ['MeanSCB_' + str(freq)]
+            mean_scb = mean_scb.join(tmp_mean_scb, how='outer', sort=True)
 
-        return meanSCB
+        return mean_scb
 
-    def get_proc_params(self, frequency):
-        """Return the processing parameters for for the acoustic data
-        set described by frequency.
+    def get_sac(self, frequencies):
+        """Return the sediment attenuation coefficient time series.
+
+        :param frequencies:
+        :type frequencies: list
+        :return:
         """
 
-        return self._acoustic_data[frequency].get_proc_params()
-
-    def get_SAC(self, frequencies):
-        """Return the sediment attenuation coefficient (SAC) time series."""
-
-        # get all contained frequencies if requested
-        if frequencies == 'All':
-            frequencies = self.get_freqs()
+        self._validate_frequencies(frequencies)
 
         # create empty DataFrame
         sac = pd.DataFrame()
 
-        # assert that frequencies is a list
-        assert (isinstance(frequencies, list))
-
         for freq in frequencies:
             advm_data = self._acoustic_data[freq]
             tmp_sac = advm_data.get_SAC()
-            tmp_sac.columns = ['meanSCB' + freq]
+            tmp_sac.columns = ['MeanSCB_' + str(freq)]
             sac = sac.join(tmp_sac, how='outer', sort=True)
 
         return sac
-
-    def get_SCB(self, frequency):
-        """Return the sediment corrected backscatter (SCB) time series."""
-        return self._acoustic_data[frequency].get_SCB()
-
-    def get_WCB(self, frequency):
-        """Return the water corrected backscatter (WCB) time series."""
-        return self._acoustic_data[frequency].get_WCB()
 
 
 class RawAcousticDataConverter:
@@ -973,60 +983,42 @@ class RawAcousticDataConverter:
 
     def __init__(self):
 
-        self._conf_params = ADVMConfigParam()
+        self._config_param = ADVMConfigParam()
 
-    def get_conf_params(self):
+    def get_config_param(self):
         """Returns ADVM configuration parameters"""
 
-        return self._conf_params.get_dict()
+        return self._config_param.get_dict()
 
-    def set_conf_params(self, advm_conf_params):
+    def set_config_param(self, advm_config_params):
         """Sets the configuration parameters that are used to generate
         ADVMData objects.
+
+        :param advm_config_params:
+         :type advm_config_params: ADVMConfigParam
+        :return:
         """
 
-        self._conf_params.update(advm_conf_params)
+        self._config_param.update(advm_config_params)
 
     def convert_raw_data(self, advm_df):
-        """Convert raw acoustic data to ADVM data type"""
+        """
 
-        # get the columns of the data frame
-        df_cols = list(advm_df)
+        :param advm_df:
+         :type advm_df: pd.DataFrame
+        :return:
+        """
 
         # the pattern of the columns to search for
-        col_pattern = r'(Temp|Vbeam|(^Cell\d{2}(Amp|SNR)\d{1}))$'
+        col_pattern = r'^(Temp|Vbeam|(Cell\d{2}(Amp|SNR)\d{1}))$'
 
-        # create an empty list to hold raw data column names
-        raw_data_cols = []
+        acoustic_data = advm_df.filter(col_pattern)
 
-        # for each column in the column names
-        for col in df_cols:
+        advm_data = ADVMData(self._config_param, acoustic_data)
 
-            # search for the regular expression
-            m = re.search(col_pattern, col)
+        # advm_df.drop(acoustic_data.keys(), axis=1, inplace=True)
 
-            # if the search string was found
-            if m is not None:
-                # append the column name to the raw data columns
-                raw_data_cols.append(m.group())
-
-        # if the column list contains column names
-        if len(raw_data_cols) > 0:
-
-            # get a data frame containing the columns of the raw
-            # acoustic data
-            raw_data_df = advm_df.loc[:, raw_data_cols]
-
-            # drop the columns from the input data frame
-            raw_data_df.drop(raw_data_cols, inplace=True)
-
-            # create and return an ADVMData instance
-            advm_data = ADVMData(self._conf_params, raw_data_df)
-            return advm_data
-
-        # otherwise, return None
-        else:
-            return None
+        return advm_data
 
 
 class SurrogateDataContainer:
