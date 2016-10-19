@@ -1,6 +1,8 @@
-import re
-import copy
 import abc
+import copy
+import linecache
+import os
+import re
 
 import pandas as pd
 import numpy as np
@@ -246,6 +248,12 @@ class ADVMData:
 
     """
 
+    # regex string to find acoustic backscatter columns
+    _abs_columns_regex = r'^(Cell\d{2}(Amp|SNR)\d{1})$'
+
+    # regex string to find ADVM data columns
+    _advm_columns_regex = r'(^(Temp|Vbeam|Cell\d{2}(Amp|SNR)\d{1}))$'
+
     def __init__(self, config_params, acoustic_df):
         """
         Initializes ADVMData instance. Creates default processing configuration data attribute.
@@ -257,11 +265,9 @@ class ADVMData:
         if not isinstance(acoustic_df.index, pd.tseries.index.DatetimeIndex):
             raise ValueError("Acoustic DataFrame index must be of type pandas.tseries.index.DatetimeIndex")
 
-        # define regex filter to find ADVM data columns
-        advm_column_filter = r'(^(Temp|Vbeam|Cell\d{2}(Amp|SNR)\d{1}))$'
 
         # get only the ADVM data from the passed dataframe
-        self._acoustic_df = acoustic_df.filter(regex=advm_column_filter)
+        self._acoustic_df = acoustic_df.filter(regex=self._advm_columns_regex)
 
         # rename the index column
         self._acoustic_df.index.name = 'DateTime'
@@ -430,6 +436,125 @@ class ADVMData:
         r_crit = (np.pi * (trans_rad ** 2)) / wavelength
 
         return r_crit
+
+    @staticmethod
+    def _read_argonaut_ctl_file(arg_ctl_filepath):
+        """
+        Read the Argonaut '.ctl' file into a configuration dictionary.
+
+        :param arg_ctl_filepath: Filepath containing the Argonaut '.dat' file
+        :return: Dictionary containing specific configuration parameters
+        """
+
+        # Read specific configuration values from the Argonaut '.ctl' file into a dictionary.
+        # The fixed formatting of the '.ctl' file is leveraged to extract values from foreknown file lines.
+        config_dict = {}
+        line = linecache.getline(arg_ctl_filepath, 10).strip()
+        arg_type = line.split("ArgType ------------------- ")[-1:]
+
+        if arg_type == "SL":
+            config_dict['Beam Orientation'] = "Horizontal"
+        else:
+            config_dict['Beam Orientation'] = "Vertical"
+
+        line = linecache.getline(arg_ctl_filepath, 12).strip()
+        frequency = line.split("Frequency ------- (kHz) --- ")[-1:]
+        config_dict['Frequency'] = float(frequency[0])
+
+        # calculate transducer radius (m)
+        if float(frequency[0]) == 3000:
+            config_dict['Effective Transducer Diameter'] = 0.015
+        elif float(frequency[0]) == 1500:
+            config_dict['Effective Transducer Diameter'] = 0.030
+        elif float(frequency[0]) == 500:
+            config_dict['Effective Transducer Diameter'] = 0.090
+        elif np.isnan(float(frequency[0])):
+            config_dict['Effective Transducer Diameter'] = "NaN"
+
+        config_dict['Number of Beams'] = int(2)  # always 2; no need to check file for value
+
+        line = linecache.getline(arg_ctl_filepath, 16).strip()
+        slant_angle = line.split("SlantAngle ------ (deg) --- ")[-1:]
+        config_dict['Slant Angle'] = float(slant_angle[0])
+
+        line = linecache.getline(arg_ctl_filepath, 44).strip()
+        slant_angle = line.split("BlankDistance---- (m) ------ ")[-1:]
+        config_dict['Blanking Distance'] = float(slant_angle[0])
+
+        line = linecache.getline(arg_ctl_filepath, 45).strip()
+        cell_size = line.split("CellSize -------- (m) ------ ")[-1:]
+        config_dict['Cell Size'] = float(cell_size[0])
+
+        line = linecache.getline(arg_ctl_filepath, 46).strip()
+        number_cells = line.split("Number of Cells ------------ ")[-1:]
+        config_dict['Number of Cells'] = int(number_cells[0])
+
+        return config_dict
+
+    @staticmethod
+    def _read_argonaut_dat_file(arg_dat_filepath):
+        """
+        Read the Argonaut '.dat' file into a DataFrame.
+
+        :param arg_dat_filepath: Filepath containing the Argonaut '.dat' file
+        :return: Timestamp formatted DataFrame containing '.dat' file contents
+        """
+
+        # Read the Argonaut '.dat' file into a DataFrame
+        dat_df = pd.read_table(arg_dat_filepath, sep='\s+')
+
+        # rename the relevant columns to the standard/expected names
+        dat_df.rename(columns={"Temperature": "Temp", "Level": "Vbeam"}, inplace=True)
+
+        # set dataframe index by using date/time information
+        date_time_columns = ["Year", "Month", "Day", "Hour", "Minute", "Second"]
+        datetime_index = pd.to_datetime(dat_df[date_time_columns])
+        dat_df.set_index(datetime_index, inplace=True)
+
+        # remove non-relevant columns
+        relevant_columns = ['Temp', 'Vbeam']
+        dat_df = dat_df.filter(regex=r'(' + '|'.join(relevant_columns) + r')$')
+
+        dat_df.apply(pd.to_numeric)
+
+        return dat_df
+
+    @staticmethod
+    def _read_argonaut_snr_file(arg_snr_filepath):
+        """
+        Read the Argonaut '.dat' file into a DataFrame.
+
+        :param arg_snr_filepath: Filepath containing the Argonaut '.dat' file
+        :return: Timestamp formatted DataFrame containing '.snr' file contents
+        """
+
+        # Read the Argonaut '.snr' file into a DataFrame, combine first two rows to make column headers,
+        # and remove unused datetime columns from the DataFrame.
+        snr_df = pd.read_table(arg_snr_filepath, sep='\s+', header=None)
+        header = snr_df.ix[0] + snr_df.ix[1]
+        snr_df.columns = header.str.replace(r"\(.*\)", "")  # remove parentheses and everything inside them from headers
+        snr_df = snr_df.ix[2:]
+
+        # rename columns to recognizable date/time elements
+        column_names = list(snr_df.columns)
+        column_names[1] = 'Year'
+        column_names[2] = 'Month'
+        column_names[3] = 'Day'
+        column_names[4] = 'Hour'
+        column_names[5] = 'Minute'
+        column_names[6] = 'Second'
+        snr_df.columns = column_names
+
+        # create a datetime index and set the dataframe index
+        datetime_index = pd.to_datetime(snr_df.ix[:, 'Year':'Second'])
+        snr_df.set_index(datetime_index, inplace=True)
+
+        # remove non-relevant columns
+        snr_df = snr_df.filter(regex=r'(^Cell\d{2}(Amp|SNR)\d{1})$')
+
+        snr_df = snr_df.apply(pd.to_numeric)
+
+        return snr_df
 
     @staticmethod
     def _calc_sac(wcb, cell_range):
@@ -670,6 +795,55 @@ class ADVMData:
 
             raise ADVMDataIncompatibleError("ADVM data sets are incompatible")
 
+    @classmethod
+    def drop_abs_columns(cls, df):
+        """Drop the acoustic backscatter (abs) columns from a DataFrame.
+
+        :param df:
+         :type df: pandas.DataFrame
+        :return:
+        """
+
+        # compile regular expression pattern
+        abs_columns_pattern = re.compile(cls._abs_columns_regex)
+
+        # create empty list to hold column names
+        abs_column_names = []
+
+        # find the acoustic backscatter column names within the DataFrame
+        for column in list(df.keys()):
+            abs_match = abs_columns_pattern.fullmatch(column)
+            if abs_match is not None:
+                abs_column_names.append(abs_match.string)
+
+        # return a copy of the DataFrame with the abs columns dropped
+        return df.drop(abs_column_names)
+
+    @classmethod
+    def find_advm_columns(cls, df):
+        """
+
+        :param df:
+        :return:
+        """
+
+        # compile regular expression pattern
+        advm_columns_pattern = re.compile(cls._advm_columns_regex)
+
+        # create empty list to hold column names
+        advm_columns = []
+
+        # find the acoustic backscatter column names within the DataFrame
+        for column in list(df.keys()):
+            abs_match = advm_columns_pattern.fullmatch(column)
+            if abs_match is not None:
+                advm_columns.append(abs_match.string)
+
+        if len(advm_columns) == 0:
+            return None
+        else:
+            return advm_columns
+
     def get_cell_range(self):
         """Calculate range of cells along a single beam.
 
@@ -704,6 +878,37 @@ class ADVMData:
         """
 
         return self._config_param.get_dict()
+
+    @classmethod
+    def read_argonaut_data(cls, data_path, filename):
+        """
+        Loads a Argonaut File into an ADVMData class object.
+
+        :param data_path: file path containing the Argonaut data files
+        :param filename: root filename for the 3 Argonaut files
+        :return: ADVMData object containing the Argonaut dataset information
+        """
+
+        # Read the Argonaut '.dat' file into a DataFrame
+        arg_dat_file = os.path.join(data_path, filename + ".dat")
+        dat_df = cls._read_argonaut_dat_file(arg_dat_file)
+
+        # Read the Argonaut '.snr' file into a DataFrame
+        arg_snr_file = os.path.join(data_path, filename + ".snr")
+        snr_df = cls._read_argonaut_snr_file(arg_snr_file)
+
+        # Read specific configuration values from the Argonaut '.ctl' file into a dictionary.
+        arg_ctl_file = os.path.join(data_path, filename + ".ctl")
+        config_dict = cls._read_argonaut_ctl_file(arg_ctl_file)
+
+        # Combine the '.snr' and '.dat.' DataFrames into a single acoustic DataFrame, make the timestamp
+        # the index, and return an instantiated ADVMData object
+        # acoustic_df = pd.DataFrame(index=dat_df.index, data=(pd.concat([snr_df, dat_df], axis=1)))
+        # acoustic_df.set_index('year', drop=True, inplace=True)
+        # acoustic_df.index.names = ['Timestamp']
+        acoustic_df = pd.concat([dat_df, snr_df], axis=1)
+
+        return cls(config_dict, acoustic_df)
 
     def get_mb(self):
         """Calculate measured backscatter values based on processing parameters.
@@ -837,7 +1042,7 @@ class ADVMData:
         measured_backscatter = self.get_mb().as_matrix()  # measured backscatter values
 
         water_corrected_backscatter = self._calc_wcb(measured_backscatter, temperature, frequency, cell_range,
-                                                         trans_rad, nearfield_corr)
+                                                     trans_rad, nearfield_corr)
 
         # adjust the water corrected backscatter profile
         if self._proc_param['WCB Profile Adjustment']:
@@ -870,220 +1075,40 @@ class ADVMData:
         return
 
 
-class RawAcousticDataContainer:
-    """Container for raw acoustic data type. The unique
-    identifier for an acoustic data type object is the frequency
-    of the instrument.
+def load_tab_delimited_data(data_path, filename):
+    """
+    Loads a TAB-delimited ASCII File into a Pandas DataFrame object.
+
+    :param data_path: file path containing the TAB-delimited ASCII data file
+    :param filename: root filename for the TAB-delimited ASCII file
+    :return: DataFrame object containing the ASCII file dataset information
     """
 
-    def __init__(self):
-        """Initialize AcousticDataContainer object."""
+    # Read TAB-delimited txt file into a DataFrame.
+    tab_delimited_file = os.path.join(data_path, filename + ".txt")
+    tab_delimited_df = pd.read_table(tab_delimited_file, sep='\t')
 
-        # initialize _acoustic_data as empty dictionary
-        self._acoustic_data = {}
+    # Check the formatting of the date/time columns. If one of the correct formats is used, reformat
+    # those date/time columns into a new timestamp column. If none of the correct formats are used,
+    # return an invalid file format error to the user.
+    if 'y' and 'm' and 'd' and 'H' and 'M' and 'S' in tab_delimited_df.columns:
+        tab_delimited_df.rename(columns={"y": "year", "m": "month", "d": "day"}, inplace=True)
+        tab_delimited_df.rename(columns={"H": "hour", "M": "minute", "S": "second"}, inplace=True)
+        tab_delimited_df["year"] = pd.to_datetime(tab_delimited_df[["year", "month", "day", "hour",
+                                                                    "minute", "second"]], errors="coerce")
+        tab_delimited_df.rename(columns={"year": "Timestamp"}, inplace=True)
+        tab_delimited_df.drop(["month", "day", "hour", "minute", "second"], axis=1, inplace=True)
+    elif 'Date' and 'Time' in tab_delimited_df.columns:
+        tab_delimited_df["Date"] = pd.to_datetime(tab_delimited_df["Date"] + " " + tab_delimited_df["Time"],
+                                                  errors="coerce")
+        tab_delimited_df.rename(columns={"Date": "Timestamp"}, inplace=True)
+        tab_delimited_df.drop(["Time"], axis=1, inplace=True)
+    elif 'DateTime' in tab_delimited_df.columns:
+        tab_delimited_df.rename(columns={"DateTime": "Timestamp"}, inplace=True)
+        tab_delimited_df["Timestamp"] = pd.to_datetime(tab_delimited_df["Timestamp"], errors="coerce")
+    else:
+        raise ValueError("Date and time information is incorrectly formatted.", tab_delimited_file)
 
-    def _validate_frequencies(self, frequencies):
-        """Validate frequencies passed to a function for type and value.
+    tab_delimited_df.set_index('Timestamp', drop=True, inplace=True)
 
-        :param frequencies:
-         :type frequencies: list
-        :return:
-        """
-
-        if not isinstance(frequencies, list):
-            raise TypeError("frequencies must be of type list")
-
-        for freq in frequencies:
-            if not isinstance(freq, float):
-                raise TypeError("Frequencies must be of type float")
-            if freq not in self._acoustic_data.keys():
-                raise ValueError("Invalid frequency: " + str(freq))
-
-    def add_data(self, new_advm_data, keep_curr_obs=None):
-        """
-
-        :param new_advm_data:
-         :type new_advm_data: ADVMData
-        :param keep_curr_obs:
-        :return:
-        """
-
-        # get the frequency of the ADVM data set
-        frequency = new_advm_data.get_config_params()['Frequency']
-
-        # if a data set with the frequency is already loaded,
-        if frequency in self._acoustic_data.keys():
-            self._acoustic_data[frequency].add_data(new_advm_data, keep_curr_obs=keep_curr_obs)
-
-        else:
-            self._acoustic_data[frequency] = new_advm_data
-
-    def get_advm_data(self, frequency):
-        """Return the ADVMData instance that contains the passed frequency.
-
-        :param frequency:
-        :type frequency: float
-        :return:
-        """
-
-        return self._acoustic_data[frequency]
-
-    def get_frequencies(self):
-        """Return the acoustic frequencies of the contained data."""
-
-        return list(self._acoustic_data.keys())
-
-    def get_mean_scb(self, frequencies):
-        """
-
-        :param frequencies: List of frequencies to calculate
-        :type frequencies: list
-        :return: DataFrame containing calculated mean sediment corrected backscatter values
-        """
-
-        self._validate_frequencies(frequencies)
-
-        # create empty DataFrame
-        mean_scb = pd.DataFrame()
-
-        for freq in frequencies:
-            advm_data = self._acoustic_data[freq]
-            tmp_mean_scb = advm_data.get_mean_scb()
-            tmp_mean_scb.columns = ['MeanSCB_' + str(freq)]
-            mean_scb = mean_scb.join(tmp_mean_scb, how='outer', sort=True)
-
-        return mean_scb
-
-    def get_sac(self, frequencies):
-        """Return the sediment attenuation coefficient time series.
-
-        :param frequencies:
-        :type frequencies: list
-        :return:
-        """
-
-        self._validate_frequencies(frequencies)
-
-        # create empty DataFrame
-        sac = pd.DataFrame()
-
-        for freq in frequencies:
-            advm_data = self._acoustic_data[freq]
-            tmp_sac = advm_data.get_SAC()
-            tmp_sac.columns = ['MeanSCB_' + str(freq)]
-            sac = sac.join(tmp_sac, how='outer', sort=True)
-
-        return sac
-
-
-class RawAcousticDataConverter:
-    """An object to convert data contained within a pandas.DataFrame object to an ADVMData type.
-
-    """
-
-    def __init__(self):
-
-        self._config_param = ADVMConfigParam()
-
-    def get_config_param(self):
-        """Returns ADVM configuration parameters"""
-
-        return self._config_param.get_dict()
-
-    def set_config_param(self, advm_config_params):
-        """Sets the configuration parameters that are used to generate
-        ADVMData objects.
-
-        :param advm_config_params:
-         :type advm_config_params: ADVMConfigParam
-        :return:
-        """
-
-        self._config_param.update(advm_config_params)
-
-    def convert_raw_data(self, advm_df):
-        """
-
-        :param advm_df:
-         :type advm_df: pd.DataFrame
-        :return:
-        """
-
-        # the pattern of the columns to search for
-        col_pattern = r'^(Temp|Vbeam|(Cell\d{2}(Amp|SNR)\d{1}))$'
-
-        acoustic_data = advm_df.filter(col_pattern)
-
-        advm_data = ADVMData(self._config_param, acoustic_data)
-
-        # advm_df.drop(acoustic_data.keys(), axis=1, inplace=True)
-
-        return advm_data
-
-
-class SurrogateDataContainer:
-    """Container for surrogate data. """
-
-    def __init__(self):
-        self._surrogate_data = pd.DataFrame()
-
-    def add_data(self, new_surrogate_data):
-        # merge the old data with the new data
-        # self._surrogate_data.merge(surrogate_data, inplace=True)
-        concated = pd.concat([self._surrogate_data, new_surrogate_data])
-
-        # get the grouped data frame
-        grouped = concated.groupby(level=0)
-
-        # drop the new rows
-        self._surrogate_data = grouped.last()
-
-        # sort the undated data frame
-        self._surrogate_data.sort(inplace=True)
-
-    def get_surrogate_sample(self, surrogate_name, time, time_delta):
-        """Return the surrogate samples within a 2 X time_delta time window
-        centered on time
-        """
-
-        # assert proper types
-        assert (isinstance(surrogate_name, str))
-        assert (isinstance(time, pd.Timestamp))
-        assert (isinstance(time_delta, pd.Timedelta))
-
-        # get the beginning and ending time of the time period requested
-        begin_time_period = time - time_delta
-        end_time_period = time + time_delta
-
-        # get a series instance of the surrogate data
-        surrogate_series = self._surrogate_data[surrogate_name]
-
-        # get an index of the times within the given window
-        surrogate_sample_index = begin_time_period \
-                                 <= surrogate_series.index <= end_time_period
-
-        # get a series of the samples within the window
-        surrogate_samples = surrogate_series[surrogate_sample_index]
-
-        # return the samples
-        return surrogate_samples
-
-    def get_mean_surrogate_sample(self, surrogate_name, time, time_delta):
-        """Return the mean of the surrogate samples within a
-        2 X time_delta time window centered on time
-        """
-
-        # get the surrogate samples within the requested window
-        surrogate_samples = self.get_surrogate_sample(surrogate_name,
-                                                      time, time_delta)
-
-        # get a mean of the samples
-        surrogate_mean = surrogate_samples.mean()
-
-        # create a Series instance with the mean of the sample
-        # at the given time
-        mean_surrogate_sample = pd.Series(data=surrogate_mean,
-                                          index=[time], name=surrogate_name)
-
-        # return the mean surrogate series
-        return mean_surrogate_sample
+    return tab_delimited_df
