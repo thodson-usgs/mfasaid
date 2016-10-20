@@ -263,8 +263,7 @@ class ADVMData:
         """
 
         if not isinstance(acoustic_df.index, pd.tseries.index.DatetimeIndex):
-            raise ValueError("Acoustic DataFrame index must be of type pandas.tseries.index.DatetimeIndex")
-
+            raise TypeError("Acoustic DataFrame index must be of type pandas.tseries.index.DatetimeIndex")
 
         # get only the ADVM data from the passed dataframe
         self._acoustic_df = acoustic_df.filter(regex=self._advm_columns_regex)
