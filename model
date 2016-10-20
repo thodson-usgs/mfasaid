@@ -1,0 +1,85 @@
+from datetime import timedelta
+
+import pandas as pd
+
+
+class SurrogateModel:
+    """
+
+    """
+    def __init__(self, constituent_data, surrogate_data):
+        """
+
+        :param constituent_data:
+        :type constituent_data: pd.Series
+        :param surrogate_data:
+        :type surrogate_data: pd.DataFrame
+        """
+
+        self._constituent_data = constituent_data.copy(deep=True)
+        self._removed_observations = pd.tseries.index.DatetimeIndex([], name='DateTime')
+        self._surrogate_data = surrogate_data.copy(deep=True)
+        self._surrogate_avg_timedelta = timedelta(0)
+        self._mdl_dataset = pd.DataFrame()
+
+    def get_constituent_var(self):
+        """
+
+        :return:
+        """
+
+        return self._constituent_data.name
+
+    def get_surrogate_vars(self):
+        """Return a list of the surrogate variables
+
+        :return:
+        """
+
+        return list(self._surrogate_data.keys())
+
+    def get_surrogate_avg_time(self):
+        """Returns the surrogate average time, in minutes
+
+        :return:
+        """
+
+        return self._surrogate_avg_timedelta
+
+    def get_mdl_observations(self):
+        """
+
+        :return:
+        """
+
+        return self._mdl_dataset
+
+    def remove_mdl_observations(self, observation_index):
+        """
+
+        :param observation_index:
+        :return:
+        """
+
+        self._surrogate_avg_timedelta = self._surrogate_avg_timedelta.append(observation_index)
+        self._surrogate_avg_timedelta = self._surrogate_avg_timedelta.sort_values()
+        self._surrogate_avg_timedelta = self._surrogate_avg_timedelta.drop_duplicates()
+
+    def restore_mdl_observations(self, observation_index):
+        """
+
+        :param observation_index:
+        :return:
+        """
+
+        restored_index = self._removed_observations.isin(observation_index)
+
+        self._removed_observations = self._removed_observations[~restored_index]
+
+    def restore_all_mdl_observations(self):
+        """
+
+        :return:
+        """
+
+        self.restore_mdl_observations(self._removed_observations)
