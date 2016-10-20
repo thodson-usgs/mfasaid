@@ -18,6 +18,36 @@ class ADVMDataIncompatibleError(DataException):
     pass
 
 
+class DataOrigin:
+    """Class to contain origin information for data sets"""
+    def __init__(self, origin, variables):
+
+        if not isinstance(origin, str):
+            raise TypeError('origin must be str')
+        if not isinstance(variables, (list, tuple)):
+            raise TypeError('variables must be list or tuple')
+        for var_name in variables:
+            if not isinstance(var_name, str):
+                raise TypeError('variable names must be str')
+
+        self._origin = origin
+        self._variables = variables
+
+    def get_origin(self):
+        """
+
+        :return:
+        """
+        return self._origin
+
+    def get_variables(self):
+        """
+
+        :return:
+        """
+        return self._variables
+
+
 class ADVMParam(abc.ABC):
     """Base class for ADVM parameter classes"""
 
@@ -242,6 +272,190 @@ class ADVMConfigParam(ADVMParam):
             raise ValueError(value, key)
 
 
+class Data:
+    """General data container class"""
+    def __init__(self, data, data_origin):
+        """
+
+        :param data:
+        :type data: pd.DataFrame
+        """
+
+        if not isinstance(data.index, pd.tseries.index.DatetimeIndex):
+            raise TypeError("DataFrame index must be of type pandas.tseries.index.DatetimeIndex")
+
+        self._data = pd.DataFrame(data.copy(deep=True))
+        self._data_origin = [data_origin]
+
+    def _check_variable_name(self, variable_name):
+        """
+
+        :param variable_name:
+        :type variable_name: str
+        :return:
+        """
+
+        if variable_name not in self.get_variable_names():
+            raise ValueError('{} is not a valid variable name'.format(variable_name), variable_name)
+
+    def add_data(self, other, keep_curr_obs=None):
+        """
+
+        :param other: Data
+        :param keep_curr_obs:
+        :return:
+        """
+
+        if keep_curr_obs is None:
+            verify_integrity = True
+        else:
+            verify_integrity = False
+
+        # cast to keep PyCharm from complaining
+        self._data = pd.DataFrame(pd.concat([self._data, other._data],
+                                            verify_integrity=verify_integrity))
+        self._data_origin.extend(other._data_origin)
+
+        grouped = self._data.groupby(level=0)
+
+        if keep_curr_obs:
+            self._data = grouped.first()
+        else:
+            self._data = grouped.last()
+
+    def add_tab_delimited_data(self, file_path, keep_curr_obs=None):
+        """
+
+        :param file_path:
+        :param keep_curr_obs:
+        :return:
+        """
+
+        data = self.load_tab_delimited_data(file_path)
+
+        self.add_data(data, keep_curr_obs=keep_curr_obs)
+
+    def get_data(self):
+        """
+
+        :return:
+        """
+        return self._data.copy(deep=True)
+
+    def get_variable(self, variable_name):
+        """
+
+        :param variable_name:
+        :type variable_name: str
+        :return:
+        """
+
+        self._check_variable_name(variable_name)
+
+        return pd.DataFrame(self._data.ix[:, variable_name]).dropna()
+
+    def get_variable_names(self):
+        """
+
+        :return:
+        """
+        return list(self._data.keys())
+
+    def get_variable_observation(self, variable_name, time):
+        """
+
+        :param variable_name:
+        :type variable_name: str
+        :param time:
+        :type time:
+        :return:
+        """
+
+        self._check_variable_name(variable_name)
+
+        try:
+            variable_observation = self._data.ix[time, variable_name]
+        except KeyError as err:
+            if err.args[0] == time:
+                variable_observation = None
+            else:
+                raise err
+
+        return variable_observation
+
+    def get_variable_origin(self, variable_name):
+        """
+
+        :param variable_name:
+        :type variable_name: str
+        :return:
+        """
+
+        self._check_variable_name(variable_name)
+
+        variable_origin = []
+
+        for origin in self._data_origin:
+
+            if variable_name in origin.get_variables():
+                variable_origin.append(origin.get_origin())
+
+        return variable_origin
+
+    @classmethod
+    def load_tab_delimited_data(cls, file_path):
+        """
+        Loads a TAB-delimited ASCII File into a Pandas DataFrame object.
+
+        :param file_path: file path containing the TAB-delimited ASCII data file
+        :return: DataFrame object containing the ASCII file dataset information
+        """
+
+        # Read TAB-delimited txt file into a DataFrame.
+        tab_delimited_df = pd.read_table(file_path, sep='\t')
+
+        # Check the formatting of the date/time columns. If one of the correct formats is used, reformat
+        # those date/time columns into a new timestamp column. If none of the correct formats are used,
+        # return an invalid file format error to the user.
+        if 'y' and 'm' and 'd' and 'H' and 'M' and 'S' in tab_delimited_df.columns:
+            tab_delimited_df.rename(columns={"y": "year", "m": "month", "d": "day"}, inplace=True)
+            tab_delimited_df.rename(columns={"H": "hour", "M": "minute", "S": "second"}, inplace=True)
+            tab_delimited_df["year"] = pd.to_datetime(tab_delimited_df[["year", "month", "day", "hour",
+                                                                        "minute", "second"]], errors="coerce")
+            tab_delimited_df.rename(columns={"year": "DateTime"}, inplace=True)
+            tab_delimited_df.drop(["month", "day", "hour", "minute", "second"], axis=1, inplace=True)
+        elif 'Date' and 'Time' in tab_delimited_df.columns:
+            tab_delimited_df["Date"] = pd.to_datetime(tab_delimited_df["Date"] + " " + tab_delimited_df["Time"],
+                                                      errors="coerce")
+            tab_delimited_df.rename(columns={"Date": "DateTime"}, inplace=True)
+            tab_delimited_df.drop(["Time"], axis=1, inplace=True)
+        elif 'DateTime' in tab_delimited_df.columns:
+            # tab_delimited_df.rename(columns={"DateTime": "Timestamp"}, inplace=True)
+            tab_delimited_df["DateTime"] = pd.to_datetime(tab_delimited_df["DateTime"], errors="coerce")
+        else:
+            raise ValueError("Date and time information is incorrectly formatted.", file_path)
+
+        tab_delimited_df.set_index("DateTime", drop=True, inplace=True)
+
+        data_origin = DataOrigin(file_path, list(tab_delimited_df.keys()))
+
+        return cls(tab_delimited_df, data_origin)
+
+    def transform_variable(self, variable_name, transformation):
+        """
+
+        :param variable_name:
+        :param transformation:
+        :return:
+        """
+        self._check_variable_name(variable_name)
+        trans_var_name = transformation + variable_name
+        if transformation == 'log':
+            self._data[trans_var_name] = np.log(self._data[variable_name])
+        elif transformation == 'log10':
+            self._data[trans_var_name] = np.log10(self._data[variable_name])
+
+
 class ADVMData:
     """
     Stores ADVM data and parameters.
@@ -261,9 +475,6 @@ class ADVMData:
         :param config_params: ADVM configuration data required to process ADVM data
         :param acoustic_df: DataFrame containing acoustic data
         """
-
-        if not isinstance(acoustic_df.index, pd.tseries.index.DatetimeIndex):
-            raise TypeError("Acoustic DataFrame index must be of type pandas.tseries.index.DatetimeIndex")
 
         # get only the ADVM data from the passed dataframe
         self._acoustic_df = acoustic_df.filter(regex=self._advm_columns_regex)
@@ -779,10 +990,6 @@ class ADVMData:
             self._acoustic_df = pd.DataFrame(pd.concat([self._acoustic_df, other._acoustic_df],
                                                        verify_integrity=verify_integrity))
 
-            # self._acoustic_df.drop_duplicates(subset='rownum', keep=keep, inplace=True)
-
-            # self._acoustic_df.sort_index(inplace=True)
-
             grouped = self._acoustic_df.groupby(level=0)
 
             if keep_curr_obs:
@@ -1074,40 +1281,4 @@ class ADVMData:
         return
 
 
-def load_tab_delimited_data(data_path, filename):
-    """
-    Loads a TAB-delimited ASCII File into a Pandas DataFrame object.
 
-    :param data_path: file path containing the TAB-delimited ASCII data file
-    :param filename: root filename for the TAB-delimited ASCII file
-    :return: DataFrame object containing the ASCII file dataset information
-    """
-
-    # Read TAB-delimited txt file into a DataFrame.
-    tab_delimited_file = os.path.join(data_path, filename + ".txt")
-    tab_delimited_df = pd.read_table(tab_delimited_file, sep='\t')
-
-    # Check the formatting of the date/time columns. If one of the correct formats is used, reformat
-    # those date/time columns into a new timestamp column. If none of the correct formats are used,
-    # return an invalid file format error to the user.
-    if 'y' and 'm' and 'd' and 'H' and 'M' and 'S' in tab_delimited_df.columns:
-        tab_delimited_df.rename(columns={"y": "year", "m": "month", "d": "day"}, inplace=True)
-        tab_delimited_df.rename(columns={"H": "hour", "M": "minute", "S": "second"}, inplace=True)
-        tab_delimited_df["year"] = pd.to_datetime(tab_delimited_df[["year", "month", "day", "hour",
-                                                                    "minute", "second"]], errors="coerce")
-        tab_delimited_df.rename(columns={"year": "Timestamp"}, inplace=True)
-        tab_delimited_df.drop(["month", "day", "hour", "minute", "second"], axis=1, inplace=True)
-    elif 'Date' and 'Time' in tab_delimited_df.columns:
-        tab_delimited_df["Date"] = pd.to_datetime(tab_delimited_df["Date"] + " " + tab_delimited_df["Time"],
-                                                  errors="coerce")
-        tab_delimited_df.rename(columns={"Date": "Timestamp"}, inplace=True)
-        tab_delimited_df.drop(["Time"], axis=1, inplace=True)
-    elif 'DateTime' in tab_delimited_df.columns:
-        tab_delimited_df.rename(columns={"DateTime": "Timestamp"}, inplace=True)
-        tab_delimited_df["Timestamp"] = pd.to_datetime(tab_delimited_df["Timestamp"], errors="coerce")
-    else:
-        raise ValueError("Date and time information is incorrectly formatted.", tab_delimited_file)
-
-    tab_delimited_df.set_index('Timestamp', drop=True, inplace=True)
-
-    return tab_delimited_df
