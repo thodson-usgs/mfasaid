@@ -3,6 +3,8 @@ import copy
 import linecache
 import os
 import re
+from datetime import timedelta
+from numbers import Number
 
 import pandas as pd
 import numpy as np
@@ -287,6 +289,26 @@ class Data:
         self._data = pd.DataFrame(data.copy(deep=True))
         self._data_origin = [data_origin]
 
+    @staticmethod
+    def _check_numeric(value):
+        """
+
+        :param value:
+        :return:
+        """
+        if not isinstance(value, Number):
+            raise TypeError('Expected numeric value, received {}'.format(type(value)), value)
+
+    @staticmethod
+    def _check_timestamp(value):
+        """
+
+        :param value:
+        :return:
+        """
+        if not isinstance(value, pd.tslib.Timestamp):
+            raise TypeError('Expected type pandas.tslib.Timestamp, received {}'.format(type(value)), value)
+
     def _check_variable_name(self, variable_name):
         """
 
@@ -454,6 +476,42 @@ class Data:
             self._data[trans_var_name] = np.log(self._data[variable_name])
         elif transformation == 'log10':
             self._data[trans_var_name] = np.log10(self._data[variable_name])
+        else:
+            raise ValueError('Unknown transformation: {}'.format(transformation), transformation)
+
+
+class SurrogateData(Data):
+    """Data container class for surrogate data"""
+
+    def get_avg_variable_observation(self, variable_name, time, avg_window):
+        """
+
+        :param variable_name:
+        :type variable_name: str
+        :param time:
+        :type time:
+        :param avg_window:
+        :type avg_window: float
+        :return:
+        """
+        self._check_variable_name(variable_name)
+
+        self._check_timestamp(time)
+
+        self._check_numeric(avg_window)
+
+        variable = self.get_variable(variable_name)
+
+        time_diff = timedelta(minutes=avg_window)
+
+        beginning_time = time - time_diff
+        ending_time = time + time_diff
+
+        time_window = (beginning_time < variable.index) & (variable.index <= ending_time)
+
+        variable_observation = np.float(variable.ix[time_window].mean())
+
+        return variable_observation
 
 
 class ADVMData:
