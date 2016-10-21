@@ -20,34 +20,9 @@ class ADVMDataIncompatibleError(DataException):
     pass
 
 
-class DataOrigin:
-    """Class to contain origin information for data sets"""
-    def __init__(self, origin, variables):
-
-        if not isinstance(origin, str):
-            raise TypeError('origin must be str')
-        if not isinstance(variables, (list, tuple)):
-            raise TypeError('variables must be list or tuple')
-        for var_name in variables:
-            if not isinstance(var_name, str):
-                raise TypeError('variable names must be str')
-
-        self._origin = origin
-        self._variables = variables
-
-    def get_origin(self):
-        """
-
-        :return:
-        """
-        return self._origin
-
-    def get_variables(self):
-        """
-
-        :return:
-        """
-        return self._variables
+class DataOriginError(DataException):
+    """An error if origin information is inconsistent with the data at Data initialization"""
+    pass
 
 
 class ADVMParam(abc.ABC):
@@ -281,13 +256,48 @@ class Data:
 
         :param data:
         :type data: pd.DataFrame
+        :param data_path:
+        :type data_path: str
         """
 
-        if not isinstance(data.index, pd.tseries.index.DatetimeIndex):
-            raise TypeError("DataFrame index must be of type pandas.tseries.index.DatetimeIndex")
+        self._check_index(data.index)
+        self._check_origin(data, data_origin)
 
         self._data = pd.DataFrame(data.copy(deep=True))
-        self._data_origin = [data_origin]
+        self._data_origin = data_origin
+
+    @staticmethod
+    def _check_origin(data, origin):
+        """
+
+        :param origin:
+        :return:
+        """
+
+        if not isinstance(origin, pd.DataFrame):
+            raise TypeError("Origin must be type pandas.DataFrame")
+
+        if list(origin.keys()) != ['variable', 'origin']:
+            raise DataOriginError("Origin DataFrame does not have the correct column names")
+
+        variables_grouped = origin.groupby('variable')
+        origin_variable_set = set(list(variables_grouped.groups))
+
+        data_variable_set = set(list(data.keys()))
+
+        if not (origin_variable_set.intersection(data_variable_set) == origin_variable_set.union(data_variable_set)):
+            raise DataOriginError("Origin and data variables do not match")
+
+    @staticmethod
+    def _check_index(index):
+        """
+
+        :param index:
+        :return:
+        """
+
+        if not isinstance(index, pd.tseries.index.DatetimeIndex):
+            raise TypeError("DataFrame index must be of type pandas.tseries.index.DatetimeIndex")
 
     @staticmethod
     def _check_numeric(value):
@@ -320,6 +330,42 @@ class Data:
         if variable_name not in self.get_variable_names():
             raise ValueError('{} is not a valid variable name'.format(variable_name), variable_name)
 
+    @staticmethod
+    def _load_tab_delimited_data(file_path):
+        """
+
+        :param file_path:
+        :return:
+        """
+
+        # Read TAB-delimited txt file into a DataFrame.
+        tab_delimited_df = pd.read_table(file_path, sep='\t')
+
+        # Check the formatting of the date/time columns. If one of the correct formats is used, reformat
+        # those date/time columns into a new timestamp column. If none of the correct formats are used,
+        # return an invalid file format error to the user.
+        if 'y' and 'm' and 'd' and 'H' and 'M' and 'S' in tab_delimited_df.columns:
+            tab_delimited_df.rename(columns={"y": "year", "m": "month", "d": "day"}, inplace=True)
+            tab_delimited_df.rename(columns={"H": "hour", "M": "minute", "S": "second"}, inplace=True)
+            tab_delimited_df["year"] = pd.to_datetime(tab_delimited_df[["year", "month", "day", "hour",
+                                                                        "minute", "second"]], errors="coerce")
+            tab_delimited_df.rename(columns={"year": "DateTime"}, inplace=True)
+            tab_delimited_df.drop(["month", "day", "hour", "minute", "second"], axis=1, inplace=True)
+        elif 'Date' and 'Time' in tab_delimited_df.columns:
+            tab_delimited_df["Date"] = pd.to_datetime(tab_delimited_df["Date"] + " " + tab_delimited_df["Time"],
+                                                      errors="coerce")
+            tab_delimited_df.rename(columns={"Date": "DateTime"}, inplace=True)
+            tab_delimited_df.drop(["Time"], axis=1, inplace=True)
+        elif 'DateTime' in tab_delimited_df.columns:
+            # tab_delimited_df.rename(columns={"DateTime": "Timestamp"}, inplace=True)
+            tab_delimited_df["DateTime"] = pd.to_datetime(tab_delimited_df["DateTime"], errors="coerce")
+        else:
+            raise ValueError("Date and time information is incorrectly formatted.", file_path)
+
+        tab_delimited_df.set_index("DateTime", drop=True, inplace=True)
+
+        return tab_delimited_df
+
     def add_data(self, other, keep_curr_obs=None):
         """
 
@@ -328,15 +374,16 @@ class Data:
         :return:
         """
 
+        # check yoself
+        other._check_origin(other._data, other._data_origin)
+
         if keep_curr_obs is None:
             verify_integrity = True
         else:
             verify_integrity = False
 
         # cast to keep PyCharm from complaining
-        self._data = pd.DataFrame(pd.concat([self._data, other._data],
-                                            verify_integrity=verify_integrity))
-        self._data_origin.extend(other._data_origin)
+        self._data = pd.DataFrame(pd.concat([self._data, other._data], verify_integrity=verify_integrity))
 
         grouped = self._data.groupby(level=0)
 
@@ -345,17 +392,21 @@ class Data:
         else:
             self._data = grouped.last()
 
-    def add_tab_delimited_data(self, file_path, keep_curr_obs=None):
-        """
+        self._data_origin = self._data_origin.append(other._data_origin)
+        self._data_origin.drop_duplicates(inplace=True)
+        self._data_origin.reset_index(drop=True, inplace=True)
 
-        :param file_path:
-        :param keep_curr_obs:
-        :return:
-        """
-
-        data = self.load_tab_delimited_data(file_path)
-
-        self.add_data(data, keep_curr_obs=keep_curr_obs)
+    # def add_tab_delimited_data(self, file_path, keep_curr_obs=None):
+    #     """
+    #
+    #     :param file_path:
+    #     :param keep_curr_obs:
+    #     :return:
+    #     """
+    #
+    #     data = self._load_tab_delimited_data(file_path)
+    #
+    #     self.add_data(data, keep_curr_obs=keep_curr_obs)
 
     def get_data(self):
         """
@@ -363,6 +414,14 @@ class Data:
         :return:
         """
         return self._data.copy(deep=True)
+
+    def get_num_observations(self):
+        """
+
+        :return:
+        """
+
+        return self._data.shape[0]
 
     def get_variable(self, variable_name):
         """
@@ -415,51 +474,30 @@ class Data:
 
         self._check_variable_name(variable_name)
 
-        variable_origin = []
-
-        for origin in self._data_origin:
-
-            if variable_name in origin.get_variables():
-                variable_origin.append(origin.get_origin())
+        grouped = self._data_origin.groupby('variable')
+        variable_group = grouped.get_group(variable_name)
+        variable_origin = list(variable_group['origin'])
 
         return variable_origin
 
     @classmethod
-    def load_tab_delimited_data(cls, file_path):
+    def read_tab_delimited_data(cls, file_path, params=None):
         """
-        Loads a TAB-delimited ASCII File into a Pandas DataFrame object.
+
 
         :param file_path: file path containing the TAB-delimited ASCII data file
+        :param params:
         :return: DataFrame object containing the ASCII file dataset information
         """
 
-        # Read TAB-delimited txt file into a DataFrame.
-        tab_delimited_df = pd.read_table(file_path, sep='\t')
+        tab_delimited_df = cls._load_tab_delimited_data(file_path)
 
-        # Check the formatting of the date/time columns. If one of the correct formats is used, reformat
-        # those date/time columns into a new timestamp column. If none of the correct formats are used,
-        # return an invalid file format error to the user.
-        if 'y' and 'm' and 'd' and 'H' and 'M' and 'S' in tab_delimited_df.columns:
-            tab_delimited_df.rename(columns={"y": "year", "m": "month", "d": "day"}, inplace=True)
-            tab_delimited_df.rename(columns={"H": "hour", "M": "minute", "S": "second"}, inplace=True)
-            tab_delimited_df["year"] = pd.to_datetime(tab_delimited_df[["year", "month", "day", "hour",
-                                                                        "minute", "second"]], errors="coerce")
-            tab_delimited_df.rename(columns={"year": "DateTime"}, inplace=True)
-            tab_delimited_df.drop(["month", "day", "hour", "minute", "second"], axis=1, inplace=True)
-        elif 'Date' and 'Time' in tab_delimited_df.columns:
-            tab_delimited_df["Date"] = pd.to_datetime(tab_delimited_df["Date"] + " " + tab_delimited_df["Time"],
-                                                      errors="coerce")
-            tab_delimited_df.rename(columns={"Date": "DateTime"}, inplace=True)
-            tab_delimited_df.drop(["Time"], axis=1, inplace=True)
-        elif 'DateTime' in tab_delimited_df.columns:
-            # tab_delimited_df.rename(columns={"DateTime": "Timestamp"}, inplace=True)
-            tab_delimited_df["DateTime"] = pd.to_datetime(tab_delimited_df["DateTime"], errors="coerce")
-        else:
-            raise ValueError("Date and time information is incorrectly formatted.", file_path)
+        origin = []
 
-        tab_delimited_df.set_index("DateTime", drop=True, inplace=True)
+        for variable in tab_delimited_df.keys():
+            origin.append([variable, file_path])
 
-        data_origin = DataOrigin(file_path, list(tab_delimited_df.keys()))
+        data_origin = pd.DataFrame(data=origin, columns=['variable', 'origin'])
 
         return cls(tab_delimited_df, data_origin)
 
@@ -470,6 +508,7 @@ class Data:
         :param transformation:
         :return:
         """
+        # TODO Add transformed variable to origin
         self._check_variable_name(variable_name)
         trans_var_name = transformation + variable_name
         if transformation == 'log':
@@ -514,7 +553,7 @@ class SurrogateData(Data):
         return variable_observation
 
 
-class ADVMData:
+class ADVMData(SurrogateData):
     """
     Stores ADVM data and parameters.
 
@@ -524,9 +563,11 @@ class ADVMData:
     _abs_columns_regex = r'^(Cell\d{2}(Amp|SNR)\d{1})$'
 
     # regex string to find ADVM data columns
-    _advm_columns_regex = r'(^(Temp|Vbeam|Cell\d{2}(Amp|SNR)\d{1}))$'
+    _advm_columns_regex = r'^(Temp|Vbeam|Cell\d{2}(Amp|SNR)\d{1})$'
 
-    def __init__(self, config_params, acoustic_df):
+    _non_abs_columns_regex = r'^(Temp|Vbeam)$'
+
+    def __init__(self, config_params, acoustic_data, data_origin):
         """
         Initializes ADVMData instance. Creates default processing configuration data attribute.
 
@@ -534,11 +575,11 @@ class ADVMData:
         :param acoustic_df: DataFrame containing acoustic data
         """
 
-        # get only the ADVM data from the passed dataframe
-        self._acoustic_df = acoustic_df.filter(regex=self._advm_columns_regex)
+        # get only the ADVM data from the passed DataFrame
+        self._acoustic_df = acoustic_data.filter(regex=self._advm_columns_regex)
 
         # rename the index column
-        self._acoustic_df.index.name = 'DateTime'
+        # self._acoustic_df.index.name = 'DateTime'
 
         # initialize a configuration parameter object
         self._config_param = ADVMConfigParam()
@@ -548,6 +589,15 @@ class ADVMData:
 
         # initialize a processing parameter object
         self._proc_param = ADVMProcParam(self._config_param["Number of Cells"])
+
+        self._cell_range = pd.DataFrame()
+        self._mb = pd.DataFrame()
+        self._wcb = pd.DataFrame()
+        self._scb = pd.DataFrame()
+
+        acoustic_variables = self._update_acoustic_data()
+
+        super().__init__(acoustic_variables, data_origin)
 
     def _apply_cell_range_filter(self, water_corrected_backscatter):
         """
@@ -864,8 +914,8 @@ class ADVMData:
 
         return sac_arr
 
-    @staticmethod
-    def _calc_scb(wcb, sac, cell_range):
+    @classmethod
+    def _calc_scb(cls, wcb, sac, cell_range):
         """
 
         :param wcb:
@@ -877,6 +927,8 @@ class ADVMData:
         except ValueError:
             sac = np.expand_dims(sac, axis=1)
             scb = wcb + 2 * np.tile(sac, (1, cell_range.shape[1])) * cell_range
+
+        scb = cls._single_cell_wcb_correction(wcb, scb)
 
         return scb
 
@@ -959,6 +1011,17 @@ class ADVMData:
 
         return wcb
 
+    @staticmethod
+    def _get_acoustic_data_origin(data_path):
+        """
+
+        :param data_path:
+        :return:
+        """
+        data = [['MeanSCB', data_path], ['SAC', data_path]]
+        data_origin = pd.DataFrame(data=data, columns=['variable', 'origin'])
+        return data_origin
+
     def _get_mb_array(self, backscatter_values, beam_number):
         """Extract measured backscatter values from the acoustic data frame.
 
@@ -1020,6 +1083,168 @@ class ADVMData:
 
         return water_corrected_backscatter
 
+    @staticmethod
+    def _single_cell_wcb_correction(water_corrected_backscatter, sediment_corrected_backscatter):
+        """
+
+        :param water_corrected_backscatter:
+        :param sediment_corrected_backscatter:
+        :return:
+        """
+
+        # row index of all single-cell wcb observations
+        single_cell_index = np.sum(~np.isnan(water_corrected_backscatter), axis=1) == 1
+
+        # replace NaN in single-cell observations with the WCB value
+        sediment_corrected_backscatter[single_cell_index, :] = water_corrected_backscatter[single_cell_index, :]
+
+        return sediment_corrected_backscatter
+
+    def _update_acoustic_data(self):
+        """
+
+        :return:
+        """
+        self._update_cell_range()
+        self._update_measured_backscatter()
+        self._update_water_corrected_backscatter()
+        sac = self._calc_sac(self._wcb.as_matrix(), self._cell_range.as_matrix())
+        self._update_sediment_corrected_backscatter(sac)
+
+        mean_scb = pd.DataFrame(self._scb.mean(axis=1), columns=['MeanSCB'])
+        # mean_scb.name = 'MeanSCB'
+        sac_df = pd.DataFrame(data=sac, index=mean_scb.index, columns=['SAC'])
+
+        acoustic_data = pd.concat([mean_scb, sac_df])
+
+        return acoustic_data
+
+    def _update_cell_range(self):
+        """Calculate range of cells along a single beam.
+
+        :return: Range of cells along a single beam
+        """
+
+        blanking_distance = self._config_param['Blanking Distance']
+        cell_size = self._config_param['Cell Size']
+        number_of_cells = self._config_param['Number of Cells']
+
+        first_cell_mid_point = blanking_distance + cell_size / 2
+        last_cell_mid_point = first_cell_mid_point + (number_of_cells - 1) * cell_size
+
+        slant_angle = self._config_param['Slant Angle']
+
+        cell_range = np.linspace(first_cell_mid_point,
+                                 last_cell_mid_point,
+                                 num=number_of_cells) / np.cos(np.radians(slant_angle))
+
+        cell_range = np.tile(cell_range, (self._acoustic_df.shape[0], 1))
+
+        col_names = ['R{:03}'.format(cell) for cell in range(1, number_of_cells+1)]
+
+        cell_range_df = pd.DataFrame(data=cell_range, index=self._acoustic_df.index, columns=col_names)
+
+        self._cell_range = cell_range_df
+
+    def _update_measured_backscatter(self):
+        """Calculate measured backscatter values based on processing parameters.
+
+        :return:
+        """
+
+        # get the backscatter value to return
+        backscatter_values = self._proc_param["Backscatter Values"]
+
+        # get the beam number from the processing parameters
+        beam = self._proc_param["Beam"]
+
+        # if the beam number is average, calculate the average among the beams
+        if beam == 'Avg':
+
+            # initialize empty list to hold backscatter dataframes
+            backscatter_list = []
+
+            number_of_beams = self._config_param['Number of Beams']
+
+            for beam in range(1, number_of_beams + 1):
+                beam_backscatter_df = self._get_mb_array(backscatter_values, beam)
+
+                backscatter_list.append(beam_backscatter_df)
+
+            # cast to keep PyCharm from complaining
+            df_concat = pd.DataFrame(pd.concat(backscatter_list))
+
+            by_row_index = df_concat.groupby(df_concat.index)
+
+            backscatter_df = by_row_index.mean()
+
+        # otherwise, get the backscatter from the single beam
+        else:
+
+            backscatter_df = self._get_mb_array(backscatter_values, beam)
+
+        # if Amp is selected, apply the intensity scale factor to the backscatter values
+        if backscatter_values == 'Amp':
+            scale_factor = self._proc_param['Intensity Scale Factor']
+            backscatter_df = scale_factor * backscatter_df
+
+        self._mb = backscatter_df
+
+    def _update_sediment_corrected_backscatter(self, sac):
+        """
+
+        :return:
+        """
+        # get the cell range
+        cell_range = self._cell_range.as_matrix()
+
+        # get the water corrected backscatter, with corrections specific to this instance of ADVMData
+        wcb = self._wcb.as_matrix()
+
+        # calculate sediment attenuation coefficient and sediment corrected backscatter
+        # sac = self._calc_sac(wcb, cell_range)
+        # sac = self.get_variable('SAC').as_matrix()
+
+        scb = self._calc_scb(wcb, sac, cell_range)
+
+        # create DateFrame to return
+        index = self._acoustic_df.index
+        scb_columns = ['SCB{:03}'.format(cell) for cell in range(1, self._config_param['Number of Cells'] + 1)]
+        scb_df = pd.DataFrame(index=index, data=scb, columns=scb_columns)
+
+        self._scb = scb_df
+
+    def _update_water_corrected_backscatter(self):
+        """Calculate water corrected backscatter (WCB).
+
+        :return:
+        """
+        cell_range = self._cell_range.as_matrix()
+        temperature = self._acoustic_df['Temp'].as_matrix()
+        frequency = self._config_param['Frequency']
+        trans_rad = self._config_param['Effective Transducer Diameter']/2
+        nearfield_corr = self._proc_param['Near Field Correction']
+
+        measured_backscatter = self._mb.as_matrix()  # measured backscatter values
+
+        water_corrected_backscatter = self._calc_wcb(measured_backscatter, temperature, frequency, cell_range,
+                                                     trans_rad, nearfield_corr)
+
+        # adjust the water corrected backscatter profile
+        if self._proc_param['WCB Profile Adjustment']:
+
+            water_corrected_backscatter = self._apply_minwcb_correction(water_corrected_backscatter)
+
+        water_corrected_backscatter = self._remove_min_vbeam(water_corrected_backscatter)
+        water_corrected_backscatter = self._apply_cell_range_filter(water_corrected_backscatter)
+
+        # create a dataframe of the water corrected backscatter observations
+        index = self._acoustic_df.index
+        wcb_columns = ['WCB{:03}'.format(cell) for cell in range(1, self._config_param['Number of Cells']+1)]
+        wcb = pd.DataFrame(index=index, data=water_corrected_backscatter, columns=wcb_columns)
+
+        self._wcb = wcb
+
     def add_data(self, other, keep_curr_obs=None):
         """Merges self and other ADVMData objects. Throws exception if other ADVMData object is incompatible with self.
 
@@ -1044,6 +1269,8 @@ class ADVMData:
             else:
                 verify_integrity = False
 
+            other.set_proc_params(self.get_proc_params())
+
             # cast to keep PyCharm from complaining
             self._acoustic_df = pd.DataFrame(pd.concat([self._acoustic_df, other._acoustic_df],
                                                        verify_integrity=verify_integrity))
@@ -1059,12 +1286,15 @@ class ADVMData:
 
             raise ADVMDataIncompatibleError("ADVM data sets are incompatible")
 
+        # self._data = self._compute_acoustic_data()
+        super().add_data(other, keep_curr_obs=keep_curr_obs)
+
     @classmethod
-    def drop_abs_columns(cls, df):
+    def drop_abs_columns(cls, surrogate_data):
         """Drop the acoustic backscatter (abs) columns from a DataFrame.
 
-        :param df:
-         :type df: pandas.DataFrame
+        :param surrogate_data:
+        :type surrogate_data: Data
         :return:
         """
 
@@ -1075,16 +1305,16 @@ class ADVMData:
         abs_column_names = []
 
         # find the acoustic backscatter column names within the DataFrame
-        for column in list(df.keys()):
+        for column in list(surrogate_data._data.keys()):
             abs_match = abs_columns_pattern.fullmatch(column)
             if abs_match is not None:
                 abs_column_names.append(abs_match.string)
 
         # return a copy of the DataFrame with the abs columns dropped
-        return df.drop(abs_column_names)
+        return surrogate_data._data.drop(abs_column_names, axis=1)
 
     @classmethod
-    def find_advm_columns(cls, df):
+    def find_advm_variable_names(cls, df):
         """
 
         :param df:
@@ -1108,32 +1338,35 @@ class ADVMData:
         else:
             return advm_columns
 
+    @classmethod
+    def from_surrogate_data(cls, surrogate_data, config_params):
+        """
+
+        :param surrogate_data:
+        :type surrogate_data: Data
+        :param config_params:
+        :type config_params: dict
+        :return:
+        """
+
+        acoustic_df = surrogate_data._data.filter(regex=cls._advm_columns_regex)
+
+        data_origin = pd.DataFrame(columns=['variable', 'origin'])
+        origin_group = surrogate_data._data_origin.groupby('origin')
+
+        for origin in list(origin_group.groups):
+            tmp_data_origin = cls._get_acoustic_data_origin(origin)
+            data_origin = data_origin.append(tmp_data_origin)
+
+        return cls(config_params, acoustic_df, data_origin)
+
     def get_cell_range(self):
-        """Calculate range of cells along a single beam.
+        """
 
         :return: Range of cells along a single beam
         """
 
-        blanking_distance = self._config_param['Blanking Distance']
-        cell_size = self._config_param['Cell Size']
-        number_of_cells = self._config_param['Number of Cells']
-
-        first_cell_mid_point = blanking_distance + cell_size / 2
-        last_cell_mid_point = first_cell_mid_point + (number_of_cells - 1) * cell_size
-
-        slant_angle = self._config_param['Slant Angle']
-
-        cell_range = np.linspace(first_cell_mid_point,
-                                 last_cell_mid_point,
-                                 num=number_of_cells) / np.cos(np.radians(slant_angle))
-
-        cell_range = np.tile(cell_range, (self.get_num_observations(), 1))
-
-        col_names = ['R{:03}'.format(cell) for cell in range(1, number_of_cells+1)]
-
-        cell_range_df = pd.DataFrame(data=cell_range, index=self._acoustic_df.index, columns=col_names)
-
-        return cell_range_df
+        return self._cell_range.copy(deep=True)
 
     def get_config_params(self):
         """Return dictionary containing configuration parameters.
@@ -1153,16 +1386,18 @@ class ADVMData:
         :return: ADVMData object containing the Argonaut dataset information
         """
 
+        dataset_path = os.path.join(data_path, filename)
+
         # Read the Argonaut '.dat' file into a DataFrame
-        arg_dat_file = os.path.join(data_path, filename + ".dat")
+        arg_dat_file = dataset_path + ".dat"
         dat_df = cls._read_argonaut_dat_file(arg_dat_file)
 
         # Read the Argonaut '.snr' file into a DataFrame
-        arg_snr_file = os.path.join(data_path, filename + ".snr")
+        arg_snr_file = dataset_path + ".snr"
         snr_df = cls._read_argonaut_snr_file(arg_snr_file)
 
         # Read specific configuration values from the Argonaut '.ctl' file into a dictionary.
-        arg_ctl_file = os.path.join(data_path, filename + ".ctl")
+        arg_ctl_file = dataset_path + ".ctl"
         config_dict = cls._read_argonaut_ctl_file(arg_ctl_file)
 
         # Combine the '.snr' and '.dat.' DataFrames into a single acoustic DataFrame, make the timestamp
@@ -1172,69 +1407,35 @@ class ADVMData:
         # acoustic_df.index.names = ['Timestamp']
         acoustic_df = pd.concat([dat_df, snr_df], axis=1)
 
-        return cls(config_dict, acoustic_df)
+        data_origin = cls._get_acoustic_data_origin(dataset_path)
+
+        return cls(config_dict, acoustic_df, data_origin)
+
+    @classmethod
+    def read_tab_delimited_data(cls, file_path, params=None):
+        """
+
+        :param file_path:
+        :param params:
+        :return:
+        """
+        if not isinstance(params, ADVMConfigParam):
+            raise TypeError('params must be type data.ADVMConfigParam', params)
+
+        tab_delimited_data = cls._load_tab_delimited_data(file_path)
+        acoustic_df = tab_delimited_data.filter(regex=cls._advm_columns_regex)
+
+        data_origin = cls._get_acoustic_data_origin(file_path)
+
+        return cls(params, acoustic_df, data_origin)
 
     def get_mb(self):
-        """Calculate measured backscatter values based on processing parameters.
+        """
 
         :return: DataFrame containing measured backscatter values
         """
 
-        # get the backscatter value to return
-        backscatter_values = self._proc_param["Backscatter Values"]
-
-        # get the beam number from the processing parameters
-        beam = self._proc_param["Beam"]
-
-        # if the beam number is average, calculate the average among the beams
-        if beam == 'Avg':
-
-            # initialize empty list to hold backscatter dataframes
-            backscatter_list = []
-
-            number_of_beams = self._config_param['Number of Beams']
-
-            for beam in range(1, number_of_beams+1):
-
-                beam_backscatter_df = self._get_mb_array(backscatter_values, beam)
-
-                backscatter_list.append(beam_backscatter_df)
-
-            # cast to keep PyCharm from complaining
-            df_concat = pd.DataFrame(pd.concat(backscatter_list))
-
-            by_row_index = df_concat.groupby(df_concat.index)
-
-            backscatter_df = by_row_index.mean()
-
-        # otherwise, get the backscatter from the single beam
-        else:
-
-            backscatter_df = self._get_mb_array(backscatter_values, beam)
-
-        # if Amp is selected, apply the intensity scale factor to the backscatter values
-        if backscatter_values == 'Amp':
-
-            scale_factor = self._proc_param['Intensity Scale Factor']
-            backscatter_df = scale_factor*backscatter_df
-
-        return backscatter_df
-
-    def get_mean_scb(self):
-        """Return mean sediment corrected backscatter. Throw exception if all required variables have not been provided.
-
-        :return: Mean sediment corrected backscatter for all observations contained in acoustic_df
-        """
-
-        scb = self.get_scb()
-
-        return pd.DataFrame(scb.mean(axis=1), columns=['MeanSCB'])
-
-    def get_num_observations(self):
-
-        num_observations = self._acoustic_df.shape[0]
-
-        return num_observations
+        return self._mb.copy(deep=True)
 
     def get_proc_params(self):
         """Return dictionary containing processing parameters.
@@ -1244,84 +1445,20 @@ class ADVMData:
 
         return self._proc_param.get_dict()
 
-    def get_sac(self):
-        """Calculate sediment attenuation coefficient. Throw exception if all required variables have not been provided.
-
-        :return: Sediment attenuation coefficient for all observations in acoustic_df
-        """
-
-        wcb = self.get_wcb()
-        cell_range = self.get_cell_range()
-
-        wcb_arr = wcb.as_matrix()
-        cell_range_arr = cell_range.as_matrix()
-
-        sac_arr = self._calc_sac(wcb_arr, cell_range_arr)
-
-        sac = pd.DataFrame(index=wcb.index, data=sac_arr, columns=['SAC'])
-
-        return sac
-
     def get_scb(self):
         """Calculate sediment corrected backscatter. Throw exception if all required variables have not been provided.
 
         :return: Sediment corrected backscatter for all cells in the acoustic time series
         """
-
-        # get the cell range
-        cell_range = self.get_cell_range().as_matrix()
-
-        # get the water corrected backscatter, with corrections specific to this instance of ADVMData
-        wcb = self.get_wcb().as_matrix()
-
-        # calculate sediment attenuation coefficient and sediment corrected backscatter
-        sac = self._calc_sac(wcb, cell_range)
-        scb = self._calc_scb(wcb, sac, cell_range)
-
-        # row index of all single-cell wcb observations
-        single_cell_index = np.sum(~np.isnan(wcb), axis=1) == 1
-
-        # replace NaN in single-cell observations with the WCB value
-        scb[single_cell_index, :] = wcb[single_cell_index, :]
-
-        # create DateFrame to return
-        index = self._acoustic_df.index
-        scb_columns = ['SCB{:03}'.format(cell) for cell in range(1, self._config_param['Number of Cells'] + 1)]
-        scb_df = pd.DataFrame(index=index, data=scb, columns=scb_columns)
-
-        return scb_df
+        return self._scb.copy(deep=True)
 
     def get_wcb(self):
-        """Calculate water corrected backscatter (WCB). Throw exception if all required variables have not been provided
+        """
 
         :return: Water corrected backscatter for all cells in the acoustic time series
         """
 
-        cell_range = self.get_cell_range().as_matrix()
-        temperature = self._acoustic_df['Temp'].as_matrix()
-        frequency = self._config_param['Frequency']
-        trans_rad = self._config_param['Effective Transducer Diameter']/2
-        nearfield_corr = self._proc_param['Near Field Correction']
-
-        measured_backscatter = self.get_mb().as_matrix()  # measured backscatter values
-
-        water_corrected_backscatter = self._calc_wcb(measured_backscatter, temperature, frequency, cell_range,
-                                                     trans_rad, nearfield_corr)
-
-        # adjust the water corrected backscatter profile
-        if self._proc_param['WCB Profile Adjustment']:
-
-            water_corrected_backscatter = self._apply_minwcb_correction(water_corrected_backscatter)
-
-        water_corrected_backscatter = self._remove_min_vbeam(water_corrected_backscatter)
-        water_corrected_backscatter = self._apply_cell_range_filter(water_corrected_backscatter)
-
-        # create a dataframe of the water corrected backscatter observations
-        index = self._acoustic_df.index
-        wcb_columns = ['WCB{:03}'.format(cell) for cell in range(1, self._config_param['Number of Cells']+1)]
-        wcb = pd.DataFrame(index=index, data=water_corrected_backscatter, columns=wcb_columns)
-
-        return wcb
+        return self._wcb.copy(deep=True)
 
     def set_proc_params(self, proc_params):
         """Sets the processing parameters based on user input.
@@ -1336,7 +1473,9 @@ class ADVMData:
         for key in proc_params.keys():
             self._proc_param[key] = proc_params[key]
 
-        return
+        acoustic_data = self._update_acoustic_data()
+
+        self._data = acoustic_data
 
 
 
