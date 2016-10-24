@@ -9,6 +9,38 @@ from numbers import Number
 import pandas as pd
 import numpy as np
 
+"""Module containing classes to handle data within the SAID library.
+
+
+Exceptions:
+
+DataException: Base class for exceptions within this module.
+
+ADVMDataIncompatibleError: An error if ADVMData instance are incompatible
+
+DataOriginError: An error if origin information is inconsistent with the data at Data subclass initialization
+
+ConcurrentObservationError: An error if concurrent observations exist for a single variable.
+
+
+Classes:
+
+ADVMParam: Base class for ADVM parameter classes.
+
+ADVMProcParam: Stores ADVM Processing parameters.
+
+ADVMConfigParam: Stores ADVM Configuration parameters.
+
+DataManager: Base class for data subclasses.
+
+ConstituentData: Base class to manage constituent data.
+
+SurrogateData: Data manager class for surrogate data.
+
+ADVMData: Data manager class for acoustic data.
+
+"""
+
 
 class DataException(Exception):
     """Base class for all exceptions in the data module"""
@@ -21,7 +53,12 @@ class ADVMDataIncompatibleError(DataException):
 
 
 class DataOriginError(DataException):
-    """An error if origin information is inconsistent with the data at Data initialization"""
+    """An error if origin information is inconsistent with the data at Data subclass initialization"""
+    pass
+
+
+class ConcurrentObservationError(DataException):
+    """An error if concurrent observations exist for a single variable."""
     pass
 
 
@@ -118,10 +155,7 @@ class ADVMParam(abc.ABC):
 
 
 class ADVMProcParam(ADVMParam):
-    """
-    Stores ADVM Processing parameters.
-
-    """
+    """Stores ADVM Processing parameters."""
 
     def __init__(self, num_cells):
         """
@@ -187,10 +221,7 @@ class ADVMProcParam(ADVMParam):
 
 
 class ADVMConfigParam(ADVMParam):
-    """
-    Stores ADVM Configuration parameters.
-
-    """
+    """Stores ADVM Configuration parameters."""
 
     def __init__(self):
         """
@@ -249,15 +280,31 @@ class ADVMConfigParam(ADVMParam):
             raise ValueError(value, key)
 
 
-class Data:
-    """General data container class"""
-    def __init__(self, data, data_origin):
-        """
+class DataManager:
+    """Base class for data subclasses.
 
-        :param data:
+    This class provides methods for data management subclasses. It's recommended to avoid creating instances of
+    this class.
+    """
+
+    def __init__(self, data, data_origin):
+        """Initialize a Data object.
+
+        data_origin must be a DataFrame that describes the origin of all columns in the data parameter. At least one
+        row per variable. The column names of data_origin must be 'variable' and 'origin.' A brief example follows.
+
+            data_origin example:
+
+                 variable             origin
+            0           Q   Q_ILR_WY2016.txt
+            1           Q   Q_ILR_WY2017.txt
+            2          GH   Q_ILR_WY2017.txt
+            3   Turbidity        TurbILR.txt
+
+        :param data: Pandas DataFrame with time DatetimeIndex index type.
         :type data: pd.DataFrame
-        :param data_path:
-        :type data_path: str
+        :param data_path: Pandas DataFrame containing variable origin information.
+        :type data_path: pd.DataFrame
         """
 
         self._check_index(data.index)
@@ -265,6 +312,32 @@ class Data:
 
         self._data = pd.DataFrame(data.copy(deep=True))
         self._data_origin = data_origin
+
+    def _check_for_concurrent_obs(self, other):
+        """Check other DataManager for concurrent observations of a variable. Raise ConcurrentObservationError if
+        concurrent observations exist.
+
+        :param other:
+        :type other: DataManager
+        :return:
+        """
+
+        # check for concurrent observations between self and other DataManager
+        self_variables = self.get_variable_names()
+
+        other_variables = other.get_variable_names()
+
+        for variable in other_variables:
+
+            if variable in self_variables:
+
+                current_variable = self.get_variable(variable)
+                new_variable = other.get_variable(variable)
+
+                if np.any(new_variable.index.isin(current_variable.index)):
+
+                    # raise exception if concurrent observations exist
+                    raise ConcurrentObservationError("Concurrent observations exist for variable {}".format(variable))
 
     @staticmethod
     def _check_origin(data, origin):
@@ -367,23 +440,26 @@ class Data:
         return tab_delimited_df
 
     def add_data(self, other, keep_curr_obs=None):
-        """
+        """Add data from other DataManager subclass.
 
-        :param other: Data
-        :param keep_curr_obs:
+        This method adds the data and data origin information from other DataManager objects. An exception will be
+        raised if keep_curr_obs=None and concurrent observations exist for variables.
+
+        :param other: Other DataManager object.
+        :type other: DataManager
+        :param keep_curr_obs: Indicate whether or not to keep the current observations.
+        :type keep_curr_obs: {None, True, False}
         :return:
         """
 
-        # check yoself
+        # check the origin of the other DataManager
         other._check_origin(other._data, other._data_origin)
 
         if keep_curr_obs is None:
-            verify_integrity = True
-        else:
-            verify_integrity = False
+            self._check_for_concurrent_obs(other)
 
         # cast to keep PyCharm from complaining
-        self._data = pd.DataFrame(pd.concat([self._data, other._data], verify_integrity=verify_integrity))
+        self._data = pd.DataFrame(pd.concat([self._data, other._data]))
 
         grouped = self._data.groupby(level=0)
 
@@ -396,37 +472,19 @@ class Data:
         self._data_origin.drop_duplicates(inplace=True)
         self._data_origin.reset_index(drop=True, inplace=True)
 
-    # def add_tab_delimited_data(self, file_path, keep_curr_obs=None):
-    #     """
-    #
-    #     :param file_path:
-    #     :param keep_curr_obs:
-    #     :return:
-    #     """
-    #
-    #     data = self._load_tab_delimited_data(file_path)
-    #
-    #     self.add_data(data, keep_curr_obs=keep_curr_obs)
-
     def get_data(self):
-        """
+        """Return a copy of the time series data contained within the manager.
 
-        :return:
+        :return: Copy of the data being managed in a DataFrame
         """
         return self._data.copy(deep=True)
 
-    def get_num_observations(self):
-        """
-
-        :return:
-        """
-
-        return self._data.shape[0]
-
     def get_variable(self, variable_name):
-        """
+        """Return the time series of the valid observations of the variable described by variable_name.
 
-        :param variable_name:
+        Any NaN observations will not be returned.
+
+        :param variable_name: Name of variable to return time series
         :type variable_name: str
         :return:
         """
@@ -436,20 +494,21 @@ class Data:
         return pd.DataFrame(self._data.ix[:, variable_name]).dropna()
 
     def get_variable_names(self):
-        """
+        """Return a list of variable names.
 
-        :return:
+        :return: List of variable names.
         """
         return list(self._data.keys())
 
     def get_variable_observation(self, variable_name, time):
-        """
+        """Return the value for the observation value of the given variable at the given time.
 
-        :param variable_name:
+        :param variable_name: Name of variable.
         :type variable_name: str
-        :param time:
-        :type time:
-        :return:
+        :param time: Time
+        :type time: pandas.tslib.Timestamp
+        :return: variable_observation
+        :return type: numpy.float64
         """
 
         self._check_variable_name(variable_name)
@@ -465,11 +524,12 @@ class Data:
         return variable_observation
 
     def get_variable_origin(self, variable_name):
-        """
+        """Get a list of the origin(s) for the given variable name.
 
-        :param variable_name:
+        :param variable_name: Name of variable
         :type variable_name: str
-        :return:
+        :return: List containing the origin(s) of the given variable.
+        :return type: list
         """
 
         self._check_variable_name(variable_name)
@@ -482,12 +542,11 @@ class Data:
 
     @classmethod
     def read_tab_delimited_data(cls, file_path, params=None):
-        """
+        """Read a tab-delimited file containing a time series and return a DataManager instance.
 
-
-        :param file_path: file path containing the TAB-delimited ASCII data file
-        :param params:
-        :return: DataFrame object containing the ASCII file dataset information
+        :param file_path: File path containing the TAB-delimited ASCII data file
+        :param params: None.
+        :return: DataManager object containing the data information
         """
 
         tab_delimited_df = cls._load_tab_delimited_data(file_path)
@@ -502,13 +561,15 @@ class Data:
         return cls(tab_delimited_df, data_origin)
 
     def transform_variable(self, variable_name, transformation):
-        """
+        """Transform a given variable.
 
-        :param variable_name:
-        :param transformation:
+        :param variable_name: Name of variable
+        :type variable_name: str
+        :param transformation: {'log', 'log10'}
+        :type transformation: str
         :return:
         """
-        # TODO Add transformed variable to origin
+        # TODO Move transformation method to model class
         self._check_variable_name(variable_name)
         trans_var_name = transformation + variable_name
         if transformation == 'log':
@@ -519,24 +580,29 @@ class Data:
             raise ValueError('Unknown transformation: {}'.format(transformation), transformation)
 
 
-class SurrogateData(Data):
-    """Data container class for surrogate data"""
+class ConstituentData(DataManager):
+    """Data manager class for constituent data"""
+    pass
+
+
+class SurrogateData(DataManager):
+    """Data manager class for surrogate data"""
 
     def get_avg_variable_observation(self, variable_name, time, avg_window):
-        """
+        """For a given variable, get an average value from observations around a given time within a given window.
 
-        :param variable_name:
+        :param variable_name: Variable name
         :type variable_name: str
-        :param time:
-        :type time:
-        :param avg_window:
-        :type avg_window: float
-        :return:
+        :param time: Center of averaging window
+        :type time: pandas.tslib.Timestamp
+        :param avg_window: Width of half of averaging window, in minutes
+        :type avg_window: Number
+        :return: Averaged value
+        :return type: numpy.float
         """
+
         self._check_variable_name(variable_name)
-
         self._check_timestamp(time)
-
         self._check_numeric(avg_window)
 
         variable = self.get_variable(variable_name)
@@ -554,18 +620,13 @@ class SurrogateData(Data):
 
 
 class ADVMData(SurrogateData):
-    """
-    Stores ADVM data and parameters.
-
-    """
+    """Data manager class for ADVM (acoustic) data"""
 
     # regex string to find acoustic backscatter columns
     _abs_columns_regex = r'^(Cell\d{2}(Amp|SNR)\d{1})$'
 
     # regex string to find ADVM data columns
     _advm_columns_regex = r'^(Temp|Vbeam|Cell\d{2}(Amp|SNR)\d{1})$'
-
-    _non_abs_columns_regex = r'^(Temp|Vbeam)$'
 
     def __init__(self, config_params, acoustic_data, data_origin):
         """
@@ -1246,10 +1307,14 @@ class ADVMData(SurrogateData):
         self._wcb = wcb
 
     def add_data(self, other, keep_curr_obs=None):
-        """Merges self and other ADVMData objects. Throws exception if other ADVMData object is incompatible with self.
+        """Adds and another DataManager object containing acoustic data to the current object.
 
-        :param other: ADVMData object to be merged with self
-        :param keep_curr_obs: Flag to keep current observations.
+        Throws exception if other ADVMData object is incompatible with self. An exception will be raised if
+        keep_curr_obs=None and concurrent observations exist for variables.
+
+        :param other: ADVMData object to be added
+        :type other: ADVMData
+        :param keep_curr_obs: {None, True, False} Flag to indicate whether or not to keep current observations.
         :return: Merged ADVMData object
         """
 
@@ -1264,16 +1329,10 @@ class ADVMData(SurrogateData):
         # test compatibility of other data set
         if self._config_param.is_compatible(other.get_config_params()):
 
-            if keep_curr_obs is None:
-                verify_integrity = True
-            else:
-                verify_integrity = False
-
             other.set_proc_params(self.get_proc_params())
 
             # cast to keep PyCharm from complaining
-            self._acoustic_df = pd.DataFrame(pd.concat([self._acoustic_df, other._acoustic_df],
-                                                       verify_integrity=verify_integrity))
+            self._acoustic_df = pd.DataFrame(pd.concat([self._acoustic_df, other._acoustic_df]))
 
             grouped = self._acoustic_df.groupby(level=0)
 
@@ -1290,11 +1349,11 @@ class ADVMData(SurrogateData):
         super().add_data(other, keep_curr_obs=keep_curr_obs)
 
     @classmethod
-    def drop_abs_columns(cls, surrogate_data):
-        """Drop the acoustic backscatter (abs) columns from a DataFrame.
+    def drop_abs_variables(cls, surrogate_data):
+        """Drop the acoustic backscatter (ABS) variables from a DataManager object.
 
-        :param surrogate_data:
-        :type surrogate_data: Data
+        :param surrogate_data: DataManager object
+        :type surrogate_data: DataManager
         :return:
         """
 
@@ -1315,7 +1374,7 @@ class ADVMData(SurrogateData):
 
     @classmethod
     def find_advm_variable_names(cls, df):
-        """
+        """Finds and return a list of ADVM variables contained within a dataframe.
 
         :param df:
         :return:
@@ -1340,13 +1399,15 @@ class ADVMData(SurrogateData):
 
     @classmethod
     def from_surrogate_data(cls, surrogate_data, config_params):
-        """
+        """Convert the variables within a DataManager object into an ADVMData object.
 
-        :param surrogate_data:
-        :type surrogate_data: Data
-        :param config_params:
+        ADVM configuration parameters must be provided as an argument.
+
+        :param surrogate_data: DataManager object containing acoustic variables
+        :type surrogate_data: DataManager
+        :param config_params: Dictionary containing necessary ADVM configuration parameters
         :type config_params: dict
-        :return:
+        :return: ADVMData object
         """
 
         acoustic_df = surrogate_data._data.filter(regex=cls._advm_columns_regex)
@@ -1361,7 +1422,7 @@ class ADVMData(SurrogateData):
         return cls(config_params, acoustic_df, data_origin)
 
     def get_cell_range(self):
-        """
+        """Get a DataFrame containing the range of cells along a single beam.
 
         :return: Range of cells along a single beam
         """
@@ -1369,7 +1430,7 @@ class ADVMData(SurrogateData):
         return self._cell_range.copy(deep=True)
 
     def get_config_params(self):
-        """Return dictionary containing configuration parameters.
+        """Return a dictionary containing configuration parameters.
 
         :return: Dictionary containing configuration parameters
         """
@@ -1378,12 +1439,15 @@ class ADVMData(SurrogateData):
 
     @classmethod
     def read_argonaut_data(cls, data_path, filename):
-        """
-        Loads a Argonaut File into an ADVMData class object.
+        """Loads an Argonaut data set into an ADVMData class object.
+
+        The DAT, SNR, and CTL ASCII files that are exported (with headers) from ViewArgonaut must be present.
 
         :param data_path: file path containing the Argonaut data files
+        :type data_path: str
         :param filename: root filename for the 3 Argonaut files
-        :return: ADVMData object containing the Argonaut dataset information
+        :type file: str
+        :return: ADVMData object containing the Argonaut data set information
         """
 
         dataset_path = os.path.join(data_path, filename)
@@ -1407,17 +1471,22 @@ class ADVMData(SurrogateData):
         # acoustic_df.index.names = ['Timestamp']
         acoustic_df = pd.concat([dat_df, snr_df], axis=1)
 
-        data_origin = cls._get_acoustic_data_origin(dataset_path)
+        data_origin = cls._get_acoustic_data_origin(dataset_path + "(Arg)")
 
         return cls(config_dict, acoustic_df, data_origin)
 
     @classmethod
     def read_tab_delimited_data(cls, file_path, params=None):
-        """
+        """Create an ADVMData object from a tab-delimited text file that contains raw acoustic variables.
 
-        :param file_path:
-        :param params:
-        :return:
+        ADVM configuration parameters must be provided as an argument.
+
+        :param file_path: Path to tab-delimited file
+        :type file_path: str
+        :param params: Dictionary containing necessary ADVM configuration parameters
+        :type params: dict
+
+        :return: ADVMData object
         """
         if not isinstance(params, ADVMConfigParam):
             raise TypeError('params must be type data.ADVMConfigParam', params)
@@ -1430,7 +1499,7 @@ class ADVMData(SurrogateData):
         return cls(params, acoustic_df, data_origin)
 
     def get_mb(self):
-        """
+        """Get a DataFrame containing the measured backscatter.
 
         :return: DataFrame containing measured backscatter values
         """
@@ -1446,14 +1515,14 @@ class ADVMData(SurrogateData):
         return self._proc_param.get_dict()
 
     def get_scb(self):
-        """Calculate sediment corrected backscatter. Throw exception if all required variables have not been provided.
+        """Get a DataFrame containing sediment corrected backscatter.
 
-        :return: Sediment corrected backscatter for all cells in the acoustic time series
+        :return: Sediment corrected backscatter for all cells in the acoustic time series.
         """
         return self._scb.copy(deep=True)
 
     def get_wcb(self):
-        """
+        """Get a DataFrame containing water corrected backscatter.
 
         :return: Water corrected backscatter for all cells in the acoustic time series
         """
@@ -1463,8 +1532,21 @@ class ADVMData(SurrogateData):
     def set_proc_params(self, proc_params):
         """Sets the processing parameters based on user input.
 
-        :param proc_params: Dictionary containing configuration parameters
-        :return: Nothing
+        An example processing parameter dictionary that contains all of the valid keys follows.
+
+            {'Backscatter Values': 'Amp',
+             'Beam': 2,
+             'Intensity Scale Factor': 0.43,
+             'Maximum Cell Mid-Point Distance': inf,
+             'Minimum Cell Mid-Point Distance': -inf,
+             'Minimum Number of Cells': 2,
+             'Minimum Vbeam': -inf,
+             'Near Field Correction': True,
+             'WCB Profile Adjustment': True}
+
+        :param proc_params: Dictionary containing key, value pairs of processing parameters
+        :type proc_params: dict
+        :return: None
         """
 
         if not isinstance(proc_params, dict):
