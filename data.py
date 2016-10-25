@@ -380,7 +380,7 @@ class DataManager:
         :return:
         """
         if not isinstance(value, Number):
-            raise TypeError('Expected numeric value, received {}'.format(type(value)), value)
+            raise TypeError('Expected numeric value.', value)
 
     @staticmethod
     def _check_timestamp(value):
@@ -569,7 +569,7 @@ class DataManager:
         :type transformation: str
         :return:
         """
-        # TODO Move transformation method to model class
+        # TODO Move transformation method to model.py class
         self._check_variable_name(variable_name)
         trans_var_name = transformation + variable_name
         if transformation == 'log':
@@ -1437,6 +1437,37 @@ class ADVMData(SurrogateData):
 
         return self._config_param.get_dict()
 
+    def get_mb(self):
+        """Get a DataFrame containing the measured backscatter.
+
+        :return: DataFrame containing measured backscatter values
+        """
+
+        return self._mb.copy(deep=True)
+
+    def get_proc_params(self):
+        """Return dictionary containing processing parameters.
+
+        :return: Dictionary containing processing parameters
+        """
+
+        return self._proc_param.get_dict()
+
+    def get_scb(self):
+        """Get a DataFrame containing sediment corrected backscatter.
+
+        :return: Sediment corrected backscatter for all cells in the acoustic time series.
+        """
+        return self._scb.copy(deep=True)
+
+    def get_wcb(self):
+        """Get a DataFrame containing water corrected backscatter.
+
+        :return: Water corrected backscatter for all cells in the acoustic time series
+        """
+
+        return self._wcb.copy(deep=True)
+
     @classmethod
     def read_argonaut_data(cls, data_path, filename):
         """Loads an Argonaut data set into an ADVMData class object.
@@ -1497,37 +1528,6 @@ class ADVMData(SurrogateData):
         data_origin = cls._get_acoustic_data_origin(file_path)
 
         return cls(params, acoustic_df, data_origin)
-
-    def get_mb(self):
-        """Get a DataFrame containing the measured backscatter.
-
-        :return: DataFrame containing measured backscatter values
-        """
-
-        return self._mb.copy(deep=True)
-
-    def get_proc_params(self):
-        """Return dictionary containing processing parameters.
-
-        :return: Dictionary containing processing parameters
-        """
-
-        return self._proc_param.get_dict()
-
-    def get_scb(self):
-        """Get a DataFrame containing sediment corrected backscatter.
-
-        :return: Sediment corrected backscatter for all cells in the acoustic time series.
-        """
-        return self._scb.copy(deep=True)
-
-    def get_wcb(self):
-        """Get a DataFrame containing water corrected backscatter.
-
-        :return: Water corrected backscatter for all cells in the acoustic time series
-        """
-
-        return self._wcb.copy(deep=True)
 
     def set_proc_params(self, proc_params):
         """Sets the processing parameters based on user input.
