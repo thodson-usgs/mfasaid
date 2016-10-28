@@ -280,13 +280,14 @@ class ADVMConfigParam(ADVMParam):
             raise ValueError(value, key)
 
 
-class DataManager:
+class DataManager(abc.ABC):
     """Base class for data subclasses.
 
     This class provides methods for data management subclasses. It's recommended to avoid creating instances of
     this class.
     """
 
+    @abc.abstractmethod
     def __init__(self, data, data_origin):
         """Initialize a Data object.
 
@@ -307,7 +308,6 @@ class DataManager:
         :type data_path: pd.DataFrame
         """
 
-        self._check_index(data.index)
         self._check_origin(data, data_origin)
 
         self._data = pd.DataFrame(data.copy(deep=True))
@@ -360,27 +360,6 @@ class DataManager:
 
         if not (origin_variable_set.intersection(data_variable_set) == origin_variable_set.union(data_variable_set)):
             raise DataOriginError("Origin and data variables do not match")
-
-    @staticmethod
-    def _check_index(index):
-        """
-
-        :param index:
-        :return:
-        """
-
-        if not isinstance(index, pd.tseries.index.DatetimeIndex):
-            raise TypeError("DataFrame index must be of type pandas.tseries.index.DatetimeIndex")
-
-    @staticmethod
-    def _check_numeric(value):
-        """
-
-        :param value:
-        :return:
-        """
-        if not isinstance(value, Number):
-            raise TypeError('Expected numeric value.', value)
 
     @staticmethod
     def _check_timestamp(value):
@@ -560,33 +539,32 @@ class DataManager:
 
         return cls(tab_delimited_df, data_origin)
 
-    def transform_variable(self, variable_name, transformation):
-        """Transform a given variable.
-
-        :param variable_name: Name of variable
-        :type variable_name: str
-        :param transformation: {'log', 'log10'}
-        :type transformation: str
-        :return:
-        """
-        # TODO Move transformation method to model.py class
-        self._check_variable_name(variable_name)
-        trans_var_name = transformation + variable_name
-        if transformation == 'log':
-            self._data[trans_var_name] = np.log(self._data[variable_name])
-        elif transformation == 'log10':
-            self._data[trans_var_name] = np.log10(self._data[variable_name])
-        else:
-            raise ValueError('Unknown transformation: {}'.format(transformation), transformation)
-
 
 class ConstituentData(DataManager):
     """Data manager class for constituent data"""
-    pass
+    # TODO: Rename SurrogateData class to something more in line with the general rating model terminology
+
+    def __init__(self, data, data_origin):
+        """
+
+        :param data:
+        :param data_origin:
+        """
+        super().__init__(data, data_origin)
 
 
 class SurrogateData(DataManager):
     """Data manager class for surrogate data"""
+    # TODO: Rename SurrogateData class to something more in line with the general rating model terminology
+
+    def __init__(self, data, data_origin):
+        """
+
+        :param data:
+        :param data_origin:
+        """
+
+        super().__init__(data, data_origin)
 
     def get_avg_variable_observation(self, variable_name, time, avg_window):
         """For a given variable, get an average value from observations around a given time within a given window.
@@ -602,8 +580,6 @@ class SurrogateData(DataManager):
         """
 
         self._check_variable_name(variable_name)
-        self._check_timestamp(time)
-        self._check_numeric(avg_window)
 
         variable = self.get_variable(variable_name)
 
@@ -1319,12 +1295,12 @@ class ADVMData(SurrogateData):
         """
 
         # check type of other
-        if not isinstance(other, ADVMData):
-            raise TypeError('other must be of type data.ADVMData')
+        # if not isinstance(other, ADVMData):
+        #     raise TypeError('other must be of type data.ADVMData')
 
         # check type of keep_curr_obs
-        if (keep_curr_obs is not None) and not (isinstance(keep_curr_obs, bool)):
-            raise TypeError('keep_curr_obs type must be None or bool')
+        # if (keep_curr_obs is not None) and not (isinstance(keep_curr_obs, bool)):
+        #     raise TypeError('keep_curr_obs type must be None or bool')
 
         # test compatibility of other data set
         if self._config_param.is_compatible(other.get_config_params()):
@@ -1558,6 +1534,3 @@ class ADVMData(SurrogateData):
         acoustic_data = self._update_acoustic_data()
 
         self._data = acoustic_data
-
-
-
