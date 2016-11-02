@@ -1,6 +1,8 @@
 import abc
 import copy
 
+import numpy as np
+
 # needed for variable transformations
 from numpy import log, log10, power
 
@@ -25,8 +27,13 @@ class InvalidVariableTransformError(ModelException):
     pass
 
 
+class ModelVariableRangeError(ModelException):
+    """Raise when an invalid variable range is encountered."""
+    pass
+
+
 class RatingModel(abc.ABC):
-    """"""
+    """Base class for rating models."""
 
     _transform_functions = {None: 'x',
                             'log': 'log(x)',
@@ -34,7 +41,7 @@ class RatingModel(abc.ABC):
                             'pow2': 'power(x, 2)'}
 
     def __init__(self, response_data, explanatory_data, response_variable=None):
-        """
+        """Initialize a RatingModel object.
 
         :param response_data:
         :type response_data: data.ConstituentData
@@ -46,29 +53,32 @@ class RatingModel(abc.ABC):
         self._response_data = response_data
         self._explanatory_data = explanatory_data
 
+        # set the response variable, make sure it's valid
         if (response_variable is None) or (response_variable in response_data.get_variable_names()):
             self._response_variable = response_variable
         else:
             raise InvalidModelVariableNameError("{} is not a valid response variable name.".format(response_variable))
-        # self._check_response_variable(response_variable)
-        # self._response_variable = response_variable
 
+        # initialize the explanatory variables attribute
         self._explanatory_variables = (None,)
 
         # noinspection PyUnresolvedReferences
         self._excluded_observations = pd.tseries.index.DatetimeIndex([], name='DateTime')
         self._model_dataset = pd.DataFrame()
 
+        # initialize the explanatory variable averaging window and transform
         self._explanatory_variable_avg_window = {}
         self._explanatory_variable_transform = {}
         for variable in explanatory_data.get_variable_names():
             self._explanatory_variable_avg_window[variable] = 0
             self._explanatory_variable_transform[variable] = None
 
+        # initialize the response variable transform
         self._response_variable_transform = {}
         for variable in response_data.get_variable_names():
             self._response_variable_transform[variable] = None
 
+        # initialize the model attribute
         self._model = None
 
     def _check_explanatory_variables(self, explanatory_variables):
@@ -170,7 +180,11 @@ class RatingModel(abc.ABC):
         return cls._transform_functions[transform].replace('x', variable)
 
     def exclude_observation(self, observation_time):
-        """Include the observation given the time of the response variable observation."""
+        """Exclude the observation given by observation_time from the model
+
+        :param observation_time:
+        :return:
+        """
 
         self._excluded_observations = self._excluded_observations.append(observation_time)
         self._excluded_observations = self._excluded_observations.sort_values()
@@ -179,12 +193,18 @@ class RatingModel(abc.ABC):
         self._create_model()
 
     def get_explanatory_avg_window(self):
-        """Returns a dictionary containing the averaging time, in minutes, for the explanatory variables."""
+        """Returns a dictionary containing the averaging time, in minutes, for the explanatory variables.
+
+        :return:
+        """
 
         return copy.deepcopy(self._explanatory_variable_avg_window)
 
     def get_excluded_observations(self):
-        """Returns a time series of observations that have been excluded from the model."""
+        """Returns a time series of observations that have been excluded from the model.
+
+        :return:
+        """
 
         return copy.deepcopy(self._excluded_observations)
 
@@ -198,6 +218,10 @@ class RatingModel(abc.ABC):
             model_dataset.ix[:, 'Excluded'] = model_dataset.index.isin(self._excluded_observations)
 
         return model_dataset
+
+    @abc.abstractmethod
+    def get_model_summary(self):
+        pass
 
     def get_response_variable(self):
         """Return the name of the current response variable"""
@@ -262,7 +286,7 @@ class RatingModel(abc.ABC):
         pass
 
     def update_model(self):
-        """
+        """Update the regression model.
 
         :return:
         """
@@ -272,7 +296,7 @@ class RatingModel(abc.ABC):
 
 
 class OLSModel(RatingModel, abc.ABC):
-    """"""
+    """Ordinary least squares (OLS) regression based rating model abstract class."""
 
     def _create_model(self):
         """
@@ -332,6 +356,7 @@ class OLSModel(RatingModel, abc.ABC):
 
 
 class SimpleLinearRatingModel(OLSModel):
+    """Class for OLS simple linear regression (SLR) ratings."""
 
     def __init__(self, response_data, explanatory_data, response_variable=None, explanatory_variable=None):
         """
@@ -350,9 +375,9 @@ class SimpleLinearRatingModel(OLSModel):
         self.update_model()
 
     def get_explanatory_variable(self):
-        """
+        """Returns the name of the explanatory variable used in the SLR.
 
-        :return:
+        :return: Name of explanatory variable
         """
 
         return self._explanatory_variables[0]
@@ -585,3 +610,257 @@ class ComplexRatingModel(OLSModel):
         self._check_explanatory_variables([variable])
         self._explanatory_variables = (variable,)
         self.update_model()
+
+
+class CompoundRatingModel(RatingModel):
+    """"""
+
+    def __init__(self, response_data, explanatory_data, response_variable=None, explanatory_variable=None):
+
+        super().__init__(response_data, explanatory_data, response_variable)
+
+        if explanatory_variable:
+            self.set_explanatory_variable(explanatory_variable)
+
+        self._explanatory_variable_transform = [[None]]
+
+        self._breakpoints = np.array([-np.inf, np.inf])
+
+        self._model = []
+
+        self.update_model()
+
+    def _check_segment(self, segment_number):
+        """
+
+        :param segment:
+        :return:
+        """
+
+        if not 0 < segment_number and segment_number <= len(self._model):
+            raise ValueError("Invalid segment number.")
+
+    def _create_model(self):
+        """
+
+        :return:
+        """
+
+        self._model = []
+
+        removed_observation_index = self._model_dataset.index.isin(self._excluded_observations)
+
+        if self.get_response_variable() and self.get_explanatory_variable():
+
+            for i in range(len(self._breakpoints)-1):
+                lower_bound = self._breakpoints[i]
+                upper_bound = self._breakpoints[i+1]
+
+                segment_range_index = (lower_bound < self._model_dataset.ix[:, self._explanatory_variables[0]]) & \
+                                      (self._model_dataset.ix[:, self._explanatory_variables[0]] <= upper_bound)
+
+                model_subset = segment_range_index & ~removed_observation_index
+
+                model_formula = self.get_model_formula(i+1)
+
+                try:
+                    segment_model = smf.ols(model_formula,
+                                            data=self._model_dataset,
+                                            subset=model_subset,
+                                            missing='drop')
+                except ValueError as err:
+                    if err.args[0] == "zero-size array to reduction operation maximum which has no identity":
+                        segment_model = None
+                    else:
+                        raise err
+
+                self._model.append(segment_model)
+
+    def add_breakpoint(self, new_breakpoint):
+        """
+
+        :param new_breakpoint:
+        :type new_breakpoint: abc.Numeric
+        :return:
+        """
+
+        breakpoints = np.append(self._breakpoints, new_breakpoint)
+        breakpoints = breakpoints[~np.isnan(breakpoints)]
+        self._breakpoints = np.sort(breakpoints)
+
+        self.reset_explanatory_var_transform()
+
+        self._create_model()
+
+    def add_explanatory_var_transform(self, segment, transform):
+        """
+
+        :param segment:
+        :param transform:
+        :return:
+        """
+
+        self._check_segment(segment)
+        self._check_transform(transform)
+
+        self._explanatory_variable_transform[segment-1].append(transform)
+
+        self._create_model()
+
+    def get_breakpoints(self):
+        """
+
+        :return:
+        """
+
+        return copy.deepcopy(self._breakpoints)
+
+    def get_explanatory_variable(self):
+        """
+
+        :return:
+        """
+
+        return self._explanatory_variables[0]
+
+    def get_model_formula(self, segment=None):
+        """
+
+        :param segment:
+        :return:
+        """
+
+        if segment:
+
+            if self.get_response_variable() and self.get_explanatory_variable():
+
+                self._check_segment(segment)
+
+                model_response_variable = self._get_variable_transform(
+                    self._response_variable, self._response_variable_transform[self._response_variable])
+
+                model_explanatory_variables = []
+
+                for transform in self._explanatory_variable_transform[segment-1]:
+                    model_explanatory_variables.append(
+                        self._get_variable_transform(self._explanatory_variables[0], transform))
+
+                model_formula = model_response_variable + ' ~ ' + ' + '.join(model_explanatory_variables)
+
+            else:
+
+                model_formula = None
+
+        else:
+
+            model_formula = []
+
+            for i in range(0, self.get_number_of_segments()):
+
+                model_formula.append(self.get_model_formula(i+1))
+
+        return model_formula
+
+    def get_model_summary(self):
+        """
+
+        :return:
+        """
+
+        # TODO: Implement CompoundRatingModel.get_model_summary()
+
+        pass
+
+    def get_number_of_segments(self):
+        """
+
+        :return:
+        """
+
+        return len(self._breakpoints)-1
+
+    def remove_breakpoint(self, breakpoint):
+        """
+
+        :param breakpoint:
+        :return:
+        """
+
+        new_breakpoints = self._breakpoints[~(self._breakpoints == breakpoint)]
+        if np.inf not in new_breakpoints:
+            new_breakpoints = np.append(new_breakpoints, np.inf)
+        if -np.inf not in new_breakpoints:
+            new_breakpoints = np.append(new_breakpoints, -np.inf)
+
+        self._breakpoints = np.sort(new_breakpoints)
+
+        self.reset_explanatory_var_transform()
+
+        self._create_model()
+
+    def remove_explanatory_var_transform(self, segment, transform):
+        """
+
+        :param segment:
+        :param transform:
+        :return:
+        """
+
+        self._check_segment(segment)
+
+        if transform in self._explanatory_variable_transform:
+            self._explanatory_variable_transform[segment-1].remove(transform)
+            if len(self._explanatory_variable_transform[segment-1]) < 1:
+                self.reset_explanatory_var_transform(segment)
+
+    def reset_breakpoints(self):
+        """
+
+        :return:
+        """
+
+        self._breakpoints = [-np.inf, np.inf]
+
+        self.reset_explanatory_var_transform()
+
+        self._create_model()
+
+    def reset_explanatory_var_transform(self, segment=None):
+        """
+
+        :param segment:
+        :return:
+        """
+
+        if segment:
+
+            self._check_segment(segment)
+
+            self._explanatory_variable_transform[segment-1] = [None]
+
+        else:
+
+            self._explanatory_variable_transform = [[None] for _ in range(self.get_number_of_segments())]
+
+        self._create_model()
+
+    def set_explanatory_variable(self, explanatory_variable):
+        """
+
+        :param explanatory_variable:
+        :return:
+        """
+
+        self._check_explanatory_variables([explanatory_variable])
+        self._explanatory_variables = (explanatory_variable,)
+
+    def predict_response_variable(self, explanatory_variable):
+        """
+
+        :param explanatory_variable:
+        :return:
+        """
+
+        # TODO: Implement CompoundRatingModel.predict_response_variable)
+
+        pass

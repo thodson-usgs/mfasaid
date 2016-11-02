@@ -542,7 +542,7 @@ class DataManager(abc.ABC):
 
 class ConstituentData(DataManager):
     """Data manager class for constituent data"""
-    # TODO: Rename SurrogateData class to something more in line with the general rating model terminology
+    # TODO: Rename ConstituentData class to something more in line with the general rating model terminology
 
     def __init__(self, data, data_origin):
         """
