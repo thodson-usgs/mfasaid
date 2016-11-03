@@ -7,7 +7,9 @@ import numpy as np
 from numpy import log, log10, power
 
 import pandas as pd
+import statsmodels.api as sm
 import statsmodels.formula.api as smf
+from statsmodels.sandbox.regression.predstd import wls_prediction_std
 
 import data
 
@@ -35,10 +37,21 @@ class ModelVariableRangeError(ModelException):
 class RatingModel(abc.ABC):
     """Base class for rating models."""
 
-    _transform_functions = {None: 'x',
-                            'log': 'log(x)',
-                            'log10': 'log10(x)',
-                            'pow2': 'power(x, 2)'}
+    _transform_variable_names = {None: 'x',
+                                 'log': 'log(x)',
+                                 'log10': 'log10(x)',
+                                 'pow2': 'power(x, 2)'
+                                 }
+    _transform_functions = {None: lambda x: x,
+                            'log': log,
+                            'log10': log10,
+                            'pow2': lambda x: power(x, 2)
+                            }
+    _inverse_transform_functions = {None: lambda x: x,
+                                    'log': np.exp,
+                                    'log10': lambda x: power(10, x),
+                                    'pow2': lambda x: power(x, 1/2)
+                                    }
 
     def __init__(self, response_data, explanatory_data, response_variable=None):
         """Initialize a RatingModel object.
@@ -109,7 +122,7 @@ class RatingModel(abc.ABC):
         :param transform:
         :return:
         """
-        if transform not in cls._transform_functions.keys():
+        if transform not in cls._transform_variable_names.keys():
             raise InvalidVariableTransformError("{} is an unrecognized transformation.".format(transform))
 
     @staticmethod
@@ -177,7 +190,7 @@ class RatingModel(abc.ABC):
         :return:
         """
 
-        return cls._transform_functions[transform].replace('x', variable)
+        return cls._transform_variable_names[transform].replace('x', variable)
 
     def exclude_observation(self, observation_time):
         """Exclude the observation given by observation_time from the model
@@ -327,6 +340,10 @@ class OLSModel(RatingModel, abc.ABC):
         self._model = model
 
     @abc.abstractmethod
+    def _get_exogenous_matrix(self, exogenous_df):
+        pass
+
+    @abc.abstractmethod
     def get_model_formula(self):
         pass
 
@@ -343,16 +360,84 @@ class OLSModel(RatingModel, abc.ABC):
 
         return summary
 
-    def predict_response_variable(self, explanatory_variable):
+    def predict_response_variable(self, explanatory_data=None, bias_correction=False, prediction_interval=False):
         """
 
-        :param explanatory_variable:
+        :param explanatory_data:
+        :param bias_correction:
+        :param prediction_interval:
         :return:
         """
 
         # TODO: Implement OLSModel.predict_response_variable()
 
-        pass
+        if self._model:
+
+            # get the model results
+            res = self._model.fit()
+
+            # get the explanatory data DataFrame
+            if explanatory_data:
+                explanatory_df = explanatory_data.get_data()
+            else:
+                explanatory_df = self._explanatory_data.get_data()
+
+            exog = self._get_exogenous_matrix(explanatory_df)
+
+            # predicted response variable
+            mean_response = self._model.predict(res.params, exog=exog)
+            mean_response = np.expand_dims(mean_response, axis=1)
+
+            if prediction_interval:
+
+                # confidence level for two - sided hypothesis
+                confidence_level = 0.1  # 90% prediction interval
+                confidence_level_text = '{:.1f}'.format(100*(1-confidence_level))
+
+                _, interval_l, interval_u = wls_prediction_std(res, exog=exog, alpha=confidence_level)
+
+                interval_l = np.expand_dims(interval_l, axis=1)
+                interval_u = np.expand_dims(interval_u, axis=1)
+
+                response_data = np.dstack((interval_l, mean_response, interval_u))
+
+                columns = [self._response_variable + '_L' + confidence_level_text,
+                            self._response_variable,
+                            self._response_variable + '_U' + confidence_level_text
+                            ]
+
+            else:
+
+                response_data = np.expand_dims(mean_response, axis=2)
+
+                columns = [self._response_variable]
+
+            if bias_correction:
+
+                residuals = res.resid.as_matrix()
+                residuals = np.expand_dims(residuals, axis=0)
+                residuals = np.expand_dims(residuals, axis=2)
+                residuals = np.tile(residuals, (response_data.shape[0], 1, response_data.shape[2]))
+
+                response_data = np.tile(response_data, (1, residuals.shape[1], 1))
+
+                prediction_results = np.mean(response_data + residuals, axis=1)
+
+            else:
+
+                prediction_results = np.squeeze(response_data, axis=1)
+
+            response_variable_transform = self._response_variable_transform[self._response_variable]
+
+            predicted_data = self._inverse_transform_functions[response_variable_transform](prediction_results)
+
+            predicted = pd.DataFrame(data=predicted_data, index=explanatory_df.index, columns=columns)
+
+        else:
+
+            predicted = pd.DataFrame(columns=[self._response_variable])
+
+        return predicted
 
 
 class SimpleLinearRatingModel(OLSModel):
@@ -373,6 +458,15 @@ class SimpleLinearRatingModel(OLSModel):
             self.set_explanatory_variable(explanatory_variable)
 
         self.update_model()
+
+    def _get_exogenous_matrix(self, exogenous_df):
+        """
+
+        :param exogenous_df:
+        :return:
+        """
+        # TODO: Implement SimpleLinearRatingModel._get_exogenous_matrix()
+        pass
 
     def get_explanatory_variable(self):
         """Returns the name of the explanatory variable used in the SLR.
@@ -450,6 +544,15 @@ class MultipleLinearRatingModel(OLSModel):
 
         self.update_model()
 
+    def _get_exogenous_matrix(self, exogenous_df):
+        """
+
+        :param exogenous_df:
+        :return:
+        """
+        # TODO: Implement SimpleLinearRatingModel._get_exogenous_matrix()
+        pass
+
     def get_explanatory_variables(self):
         """
 
@@ -524,12 +627,34 @@ class ComplexRatingModel(OLSModel):
 
         super().__init__(response_data, explanatory_data, response_variable)
 
+        self._explanatory_variable_transform = [None]
+
         if explanatory_variable:
             self.set_explanatory_variable(explanatory_variable)
 
-        self._explanatory_variable_transform = [None]
-
         self.update_model()
+
+    def _get_exogenous_matrix(self, exogenous_df):
+        """
+
+        :return:
+        """
+
+        explanatory_variable = self.get_explanatory_variable()
+
+        assert(explanatory_variable in exogenous_df.keys())
+
+        exog = pd.DataFrame()
+
+        for transform in self._explanatory_variable_transform:
+
+            transform_variable_name = self._get_variable_transform(explanatory_variable, transform)
+            transform_function = self._transform_functions[transform]
+            exog[transform_variable_name] = transform_function(exogenous_df[explanatory_variable])
+
+        exog = sm.add_constant(exog)
+
+        return exog
 
     def add_explanatory_var_transform(self, transform):
         """
@@ -630,7 +755,7 @@ class CompoundRatingModel(RatingModel):
 
         self.update_model()
 
-    def _check_segment(self, segment_number):
+    def _check_segment_number(self, segment_number):
         """
 
         :param segment:
@@ -700,7 +825,7 @@ class CompoundRatingModel(RatingModel):
         :return:
         """
 
-        self._check_segment(segment)
+        self._check_segment_number(segment)
         self._check_transform(transform)
 
         self._explanatory_variable_transform[segment-1].append(transform)
@@ -734,7 +859,7 @@ class CompoundRatingModel(RatingModel):
 
             if self.get_response_variable() and self.get_explanatory_variable():
 
-                self._check_segment(segment)
+                self._check_segment_number(segment)
 
                 model_response_variable = self._get_variable_transform(
                     self._response_variable, self._response_variable_transform[self._response_variable])
@@ -806,7 +931,7 @@ class CompoundRatingModel(RatingModel):
         :return:
         """
 
-        self._check_segment(segment)
+        self._check_segment_number(segment)
 
         if transform in self._explanatory_variable_transform:
             self._explanatory_variable_transform[segment-1].remove(transform)
@@ -834,7 +959,7 @@ class CompoundRatingModel(RatingModel):
 
         if segment:
 
-            self._check_segment(segment)
+            self._check_segment_number(segment)
 
             self._explanatory_variable_transform[segment-1] = [None]
 

@@ -542,7 +542,6 @@ class DataManager(abc.ABC):
 
 class ConstituentData(DataManager):
     """Data manager class for constituent data"""
-    # TODO: Rename ConstituentData class to something more in line with the general rating model terminology
 
     def __init__(self, data, data_origin):
         """
@@ -555,7 +554,6 @@ class ConstituentData(DataManager):
 
 class SurrogateData(DataManager):
     """Data manager class for surrogate data"""
-    # TODO: Rename SurrogateData class to something more in line with the general rating model terminology
 
     def __init__(self, data, data_origin):
         """
@@ -595,8 +593,8 @@ class SurrogateData(DataManager):
         return variable_observation
 
 
-class ADVMData(SurrogateData):
-    """Data manager class for ADVM (acoustic) data"""
+class ADVMSedimentAcousticData(SurrogateData):
+    """Data manager class for ADVM sediment acoustic data"""
 
     # regex string to find acoustic backscatter columns
     _abs_columns_regex = r'^(Cell\d{2}(Amp|SNR)\d{1})$'
