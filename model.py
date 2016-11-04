@@ -396,7 +396,20 @@ class SimpleLinearRatingModel(OLSModel):
         :return:
         """
         # TODO: Implement SimpleLinearRatingModel._get_exogenous_matrix()
-        pass
+
+        explanatory_variable = self.get_explanatory_variable()
+
+        assert(explanatory_variable in exogenous_df.keys())
+
+        exog = pd.DataFrame()
+
+        explanatory_transform = self._variable_transform[explanatory_variable]
+        transformed_variable_name = self._get_variable_transform(explanatory_variable, explanatory_transform)
+        transform_function = self._transform_functions[explanatory_transform]
+        exog[transformed_variable_name] = transform_function(exogenous_df[explanatory_variable])
+        exog = sm.add_constant(exog)
+
+        return exog
 
     def get_explanatory_variable(self):
         """Returns the name of the explanatory variable used in the SLR.

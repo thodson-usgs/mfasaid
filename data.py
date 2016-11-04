@@ -37,7 +37,7 @@ ConstituentData: Base class to manage constituent data.
 
 SurrogateData: Data manager class for surrogate data.
 
-ADVMData: Data manager class for acoustic data.
+ADVMSedimentAcousticData: Data manager class for acoustic data.
 
 """
 
@@ -429,22 +429,54 @@ class DataManager:
         :return:
         """
 
-        # check the origin of the other DataManager
-        other._check_origin(other._data, other._data_origin)
-
         if keep_curr_obs is None:
             self._check_for_concurrent_obs(other)
 
-        # cast to keep PyCharm from complaining
-        self._data = pd.DataFrame(pd.concat([self._data, other._data]))
+        # get the DataFrames to combine
+        new_df = other.get_data()
+        old_df = self.get_data()
 
-        grouped = self._data.groupby(level=0)
+        # initialize an empty DataFrame containing all columns and indices
+        new_columns = set(new_df.keys())
+        old_columns = set(old_df.keys())
+        columns = new_columns.union(old_columns)
+        index = old_df.index.union(new_df.index)
+        combined_df = pd.DataFrame(index=index, columns=columns)
 
-        if keep_curr_obs:
-            self._data = grouped.first()
-        else:
-            self._data = grouped.last()
+        # combine the DataFrames
+        for variable in columns:
 
+            if variable in old_df.keys() and variable in new_df.keys():
+
+                old_index = old_df[variable].index
+                new_index = new_df[variable].index
+
+                # fill the empty DataFrame with rows that are in the old DataFrame but not the new
+                old_index_diff = old_index.difference(new_index)
+                combined_df.ix[old_index_diff, variable] = old_df.ix[old_index_diff, variable]
+
+                # fill the empty DataFrame with rows that are in the new DataFrame but not the old
+                new_index_diff = new_index.difference(old_index)
+                combined_df.ix[new_index_diff, variable] = new_df.ix[new_index_diff, variable]
+
+                # handle the row intersection
+                index_intersect = old_index.intersection(new_index)
+                if keep_curr_obs:
+                    combined_df.ix[index_intersect, variable] = old_df.ix[index_intersect, variable]
+                else:
+                    combined_df.ix[index_intersect, variable] = new_df.ix[index_intersect, variable]
+
+            elif variable in old_df.keys():
+
+                combined_df.ix[old_df.index, variable] = old_df[variable]
+
+            elif variable in new_df.keys():
+
+                combined_df.ix[new_df.index, variable] = new_df[variable]
+
+        self._data = combined_df
+
+        # combine the variable origin data
         self._data_origin = self._data_origin.append(other._data_origin)
         self._data_origin.drop_duplicates(inplace=True)
         self._data_origin.reset_index(drop=True, inplace=True)
@@ -455,6 +487,14 @@ class DataManager:
         :return: Copy of the data being managed in a DataFrame
         """
         return self._data.copy(deep=True)
+
+    def get_origin(self):
+        """Return a DataFrame containing the variable origins.
+
+        :return:
+        """
+
+        return self._data_origin.copy(deep=True)
 
     def get_variable(self, variable_name):
         """Return the time series of the valid observations of the variable described by variable_name.
@@ -1246,11 +1286,11 @@ class ADVMSedimentAcousticData(SurrogateData):
         sac = self._calc_sac(self._wcb.as_matrix(), self._cell_range.as_matrix())
         self._update_sediment_corrected_backscatter(sac)
 
-        mean_scb = pd.DataFrame(self._scb.mean(axis=1), columns=['MeanSCB'])
+        mean_scb = pd.Series(self._scb.mean(axis=1), name='MeanSCB')
         # mean_scb.name = 'MeanSCB'
-        sac_df = pd.DataFrame(data=sac, index=mean_scb.index, columns=['SAC'])
+        sac_df = pd.Series(data=sac, index=mean_scb.index, name='SAC')
 
-        acoustic_data = pd.concat([mean_scb, sac_df])
+        acoustic_data = pd.concat([mean_scb, sac_df], axis=1)
 
         return acoustic_data
 
@@ -1405,8 +1445,7 @@ class ADVMSedimentAcousticData(SurrogateData):
 
             other.set_proc_params(self.get_proc_params())
 
-            # cast to keep PyCharm from complaining
-            self._acoustic_df = pd.DataFrame(pd.concat([self._acoustic_df, other._acoustic_df]))
+            self._acoustic_df = pd.concat([self._acoustic_df, other._acoustic_df])
 
             grouped = self._acoustic_df.groupby(level=0)
 
