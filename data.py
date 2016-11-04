@@ -280,14 +280,12 @@ class ADVMConfigParam(ADVMParam):
             raise ValueError(value, key)
 
 
-class DataManager(abc.ABC):
+class DataManager:
     """Base class for data subclasses.
 
-    This class provides methods for data management subclasses. It's recommended to avoid creating instances of
-    this class.
+    This class provides methods for data management subclasses.
     """
 
-    @abc.abstractmethod
     def __init__(self, data, data_origin):
         """Initialize a Data object.
 
@@ -543,13 +541,115 @@ class DataManager(abc.ABC):
 class ConstituentData(DataManager):
     """Data manager class for constituent data"""
 
-    def __init__(self, data, data_origin):
+    def __init__(self, data, data_origin, surrogate_data=None):
         """
 
         :param data:
         :param data_origin:
         """
         super().__init__(data, data_origin)
+
+        self._constituent_data = data
+
+        self._surrogate_variable_avg_window = {}
+        self._surrogate_data = None
+
+        if surrogate_data:
+            self.add_surrogate_data(surrogate_data)
+
+    def _check_surrogate_variable_name(self, variable_name):
+        """
+
+        :param variable_name:
+        :return:
+        """
+
+        if variable_name not in self._surrogate_data.get_variable_names():
+            raise ValueError("{} is an invalid surrogate variable name".format(variable_name))
+
+    def add_surrogate_data(self, surrogate_data, keep_curr_obs=None):
+        """Add surrogate data observations.
+
+        :param surrogate_data: Surrogate data manager
+        :type surrogate_data: SurrogateData
+        :param keep_curr_obs:
+        :return:
+        """
+
+        # surrogate_data must be a subclass of SurrogateData
+        if not isinstance(surrogate_data, SurrogateData):
+            raise TypeError("surrogate_data must be a subclass of data.SurrogateData")
+
+        # add the surrogate data
+        if self._surrogate_data:
+            self._surrogate_data.add_data(surrogate_data, keep_curr_obs)
+        else:
+            self._surrogate_data = surrogate_data
+
+        # update the surrogate data averaging window
+        for variable in self._surrogate_data.get_variable_names():
+            if variable not in self._surrogate_variable_avg_window.keys():
+                self._surrogate_variable_avg_window[variable] = 0
+
+        # update the dataset
+        self.update_data()
+
+    def get_surrogate_avg_window(self, surrogate_variable_name):
+        """
+
+        :param surrogate_variable_name:
+        :return:
+        """
+
+        return self._surrogate_variable_avg_window[surrogate_variable_name]
+
+    def set_surrogate_avg_window(self, surrogate_variable_name, avg_window):
+        """
+
+        :param surrogate_variable_name:
+        :param avg_window:
+        :return:
+        """
+
+        if not isinstance(avg_window, Number):
+            raise TypeError("avg_window must be type Number")
+
+        self._check_surrogate_variable_name(surrogate_variable_name)
+        self._surrogate_variable_avg_window[surrogate_variable_name] = avg_window
+        self.update_data()
+
+    def update_data(self):
+        """Update the data set.
+
+        Call when changes to the surrogate data set have been made.
+
+        :return: None
+        """
+
+        if self._surrogate_data:
+
+            # initialize data for a DataManager
+            averaged_surrogate_data = \
+                pd.DataFrame(index=self._data.index, columns=self._surrogate_data.get_variable_names())
+            surrogate_variable_origin_data = []
+
+            # for each surrogate variable, get the averaged value and the origin
+            for variable in self._surrogate_data.get_variable_names():
+                for index, _ in averaged_surrogate_data.iterrows():
+                    avg_window = self._surrogate_variable_avg_window[variable]
+                    averaged_surrogate_data.ix[index, variable] = \
+                        self._surrogate_data.get_avg_variable_observation(variable, index, avg_window)
+                for origin in self._surrogate_data.get_variable_origin(variable):
+                    surrogate_variable_origin_data.append([variable, origin])
+
+            # create origin DataFrame
+            surrogate_variable_origin = \
+                pd.DataFrame(data=surrogate_variable_origin_data, columns=['variable', 'origin'])
+
+            # create data manager for new data
+            data_manager = DataManager(averaged_surrogate_data, surrogate_variable_origin)
+
+            self.add_data(data_manager, keep_curr_obs=False)
 
 
 class SurrogateData(DataManager):

@@ -53,67 +53,45 @@ class RatingModel(abc.ABC):
                                     'pow2': lambda x: power(x, 1/2)
                                     }
 
-    def __init__(self, response_data, explanatory_data, response_variable=None):
+    def __init__(self, data_manager, response_variable=None):
         """Initialize a RatingModel object.
 
-        :param response_data:
-        :type response_data: data.ConstituentData
-        :param explanatory_data:
-        :type explanatory_data: data.SurrogateData
+        :param data_manager:
+        :type data_manager: data.DataManager
         :param response_variable:
         """
 
-        self._response_data = response_data
-        self._explanatory_data = explanatory_data
+        if not isinstance(data_manager, data.DataManager):
+            raise TypeError("data_manager must be type data.DataManager")
+
+        self._data_manager = data_manager
+
+        variable_names = data_manager.get_variable_names()
 
         # set the response variable, make sure it's valid
-        if (response_variable is None) or (response_variable in response_data.get_variable_names()):
-            self._response_variable = response_variable
+        if response_variable is None:
+            self._response_variable = variable_names[0]
         else:
-            raise InvalidModelVariableNameError("{} is not a valid response variable name.".format(response_variable))
+            if response_variable in variable_names:
+                self._response_variable = response_variable
+            else:
+                raise InvalidModelVariableNameError(
+                    "{} is not a valid response variable name.".format(response_variable))
 
         # initialize the explanatory variables attribute
-        self._explanatory_variables = (None,)
+        self._explanatory_variables = tuple(variable_names[1:])
 
         # noinspection PyUnresolvedReferences
         self._excluded_observations = pd.tseries.index.DatetimeIndex([], name='DateTime')
         self._model_dataset = pd.DataFrame()
 
-        # initialize the explanatory variable averaging window and transform
-        self._explanatory_variable_avg_window = {}
-        self._explanatory_variable_transform = {}
-        for variable in explanatory_data.get_variable_names():
-            self._explanatory_variable_avg_window[variable] = 0
-            self._explanatory_variable_transform[variable] = None
-
-        # initialize the response variable transform
-        self._response_variable_transform = {}
-        for variable in response_data.get_variable_names():
-            self._response_variable_transform[variable] = None
+        # initialize the variable transform dictionary
+        self._variable_transform = {}
+        for variable in variable_names:
+            self._variable_transform[variable] = None
 
         # initialize the model attribute
         self._model = None
-
-    def _check_explanatory_variables(self, explanatory_variables):
-        """
-
-        :param explanatory_variables:
-        :type explanatory_variables: abc.Iterable
-        :return:
-        """
-
-        for var_name in explanatory_variables:
-            self._check_variable_name(var_name, self.get_variable_names()[1])
-
-    def _check_response_variable(self, response_variable):
-        """
-
-        :param response_variable:
-        :type response_variable: str
-        :return:
-        """
-
-        self._check_variable_name(response_variable, self.get_variable_names()[0])
 
     @classmethod
     def _check_transform(cls, transform):
@@ -125,19 +103,17 @@ class RatingModel(abc.ABC):
         if transform not in cls._transform_variable_names.keys():
             raise InvalidVariableTransformError("{} is an unrecognized transformation.".format(transform))
 
-    @staticmethod
-    def _check_variable_name(variable_name, list_of_variable_names):
+    def _check_variable_names(self, variable_names):
         """
 
-        :param variable_name:
-        :type variable_name: str
-        :param list_of_variable_names:
-        :type list_of_variable_names: abc.Iterable
+        :param variable_names:
+        :type variable_names: abc.Iterable
         :return:
         """
-
-        if variable_name not in list_of_variable_names:
-            raise InvalidModelVariableNameError("{} is not a valid variable name.".format(variable_name), variable_name)
+        for variable in variable_names:
+            if variable not in self._data_manager.get_variable_names():
+                raise InvalidModelVariableNameError("{} is not a valid variable name.".format(variable),
+                                                    variable)
 
     @abc.abstractmethod
     def _create_model(self):
@@ -149,35 +125,10 @@ class RatingModel(abc.ABC):
         :return:
         """
 
-        try:
+        mdl_dataset = self._data_manager.get_variable(self._response_variable)
 
-            mdl_dataset = self._response_data.get_variable(self._response_variable)
-
-        except ValueError as err:
-            if err.args[1] is None:
-                mdl_dataset = pd.DataFrame()
-            else:
-                raise err
-
-        try:
-
-            for variable in self._explanatory_variables:
-                for index, row in mdl_dataset.iterrows():
-                    avg_window = self._explanatory_variable_avg_window[variable]
-                    # noinspection PyTypeChecker
-                    mdl_dataset.ix[index, variable] = \
-                        self._explanatory_data.get_avg_variable_observation(variable, index, avg_window)
-
-        except TypeError as err:
-            if err.args[0] == "'NoneType' object is not iterable":
-                mdl_dataset = pd.DataFrame()
-            else:
-                raise err
-        except KeyError as err:
-            if err.args[0] is None:
-                mdl_dataset = pd.DataFrame()
-            else:
-                raise err
+        for variable in self._explanatory_variables:
+            mdl_dataset[variable] = self._data_manager.get_variable(variable)
 
         self._model_dataset = mdl_dataset
 
@@ -204,14 +155,6 @@ class RatingModel(abc.ABC):
         self._excluded_observations = self._excluded_observations.drop_duplicates()
 
         self._create_model()
-
-    def get_explanatory_avg_window(self):
-        """Returns a dictionary containing the averaging time, in minutes, for the explanatory variables.
-
-        :return:
-        """
-
-        return copy.deepcopy(self._explanatory_variable_avg_window)
 
     def get_excluded_observations(self):
         """Returns a time series of observations that have been excluded from the model.
@@ -242,15 +185,10 @@ class RatingModel(abc.ABC):
         return self._response_variable
 
     def get_variable_names(self):
-        """Return a tuple containing a tuple of possible response variables and a tuple of possible explanatory
-        variables.
+        """Return a tuple containing the variable names within the model.
         """
-        response_variables = tuple(self._response_data.get_variable_names())
-        explanatory_variables = set(self._explanatory_data.get_variable_names())
 
-        explanatory_variables = tuple(explanatory_variables.difference(response_variables))
-
-        return response_variables, explanatory_variables
+        return tuple(self._data_manager.get_variable_names())
 
     def include_all_observations(self):
         """Include all observations that have previously been excluded."""
@@ -267,19 +205,10 @@ class RatingModel(abc.ABC):
 
         self._create_model()
 
-    def set_explanatory_avg_window(self, variable, avg_window):
-        """Set the averaging window, in minutes, for the given variable"""
-
-        self._check_variable_name(variable, self._explanatory_data.get_variable_names())
-
-        self._explanatory_variable_avg_window[variable] = avg_window
-
-        self.update_model()
-
     def set_response_variable(self, response_variable):
         """Set the response variable."""
 
-        self._check_response_variable(response_variable)
+        self._check_variable_names([response_variable])
 
         self._response_variable = response_variable
 
@@ -289,7 +218,7 @@ class RatingModel(abc.ABC):
         """Transform the response variable."""
 
         self._check_transform(transform)
-        self._response_variable_transform[self._response_variable] = transform
+        self._variable_transform[self._response_variable] = transform
 
         self._create_model()
 
@@ -380,7 +309,7 @@ class OLSModel(RatingModel, abc.ABC):
             if explanatory_data:
                 explanatory_df = explanatory_data.get_data()
             else:
-                explanatory_df = self._explanatory_data.get_data()
+                explanatory_df = self._data_manager.get_data()
 
             exog = self._get_exogenous_matrix(explanatory_df)
 
@@ -402,9 +331,9 @@ class OLSModel(RatingModel, abc.ABC):
                 response_data = np.dstack((interval_l, mean_response, interval_u))
 
                 columns = [self._response_variable + '_L' + confidence_level_text,
-                            self._response_variable,
-                            self._response_variable + '_U' + confidence_level_text
-                            ]
+                           self._response_variable,
+                           self._response_variable + '_U' + confidence_level_text
+                           ]
 
             else:
 
@@ -427,7 +356,7 @@ class OLSModel(RatingModel, abc.ABC):
 
                 prediction_results = np.squeeze(response_data, axis=1)
 
-            response_variable_transform = self._response_variable_transform[self._response_variable]
+            response_variable_transform = self._variable_transform[self._response_variable]
 
             predicted_data = self._inverse_transform_functions[response_variable_transform](prediction_results)
 
@@ -443,19 +372,20 @@ class OLSModel(RatingModel, abc.ABC):
 class SimpleLinearRatingModel(OLSModel):
     """Class for OLS simple linear regression (SLR) ratings."""
 
-    def __init__(self, response_data, explanatory_data, response_variable=None, explanatory_variable=None):
+    def __init__(self, data_manager, response_variable=None, explanatory_variable=None):
         """
 
-        :param response_data:
-        :param explanatory_data:
+        :param data_manager:
         :param response_variable:
         :param explanatory_variable:
         """
 
-        super().__init__(response_data, explanatory_data, response_variable)
+        super().__init__(data_manager, response_variable)
 
         if explanatory_variable:
             self.set_explanatory_variable(explanatory_variable)
+        else:
+            self.set_explanatory_variable(data_manager.get_variable_names()[1])
 
         self.update_model()
 
@@ -486,10 +416,10 @@ class SimpleLinearRatingModel(OLSModel):
 
             explanatory_variable = self.get_explanatory_variable()
 
-            response_var_transform = self._response_variable_transform[self._response_variable]
+            response_var_transform = self._variable_transform[self._response_variable]
             model_response_var = self._get_variable_transform(self._response_variable, response_var_transform)
 
-            explanatory_var_transform = self._explanatory_variable_transform[explanatory_variable]
+            explanatory_var_transform = self._variable_transform[explanatory_variable]
             model_explanatory_var = self._get_variable_transform(explanatory_variable, explanatory_var_transform)
 
             model_formula = model_response_var + ' ~ ' + model_explanatory_var
@@ -507,7 +437,7 @@ class SimpleLinearRatingModel(OLSModel):
         :return:
         """
 
-        self._check_explanatory_variables([variable])
+        self._check_variable_names([variable])
         self._explanatory_variables = (variable,)
         self.update_model()
 
@@ -519,7 +449,7 @@ class SimpleLinearRatingModel(OLSModel):
         """
 
         self._check_transform(transform)
-        self._explanatory_variable_transform[self._explanatory_variables[0]] = transform
+        self._variable_transform[self._explanatory_variables[0]] = transform
 
         self._create_model()
 
@@ -527,17 +457,16 @@ class SimpleLinearRatingModel(OLSModel):
 class MultipleLinearRatingModel(OLSModel):
     """"""
 
-    def __init__(self, response_data, explanatory_data, response_variable=None, explanatory_variables=None):
+    def __init__(self, data_manager, response_variable=None, explanatory_variables=None):
         """
 
-        :param response_data:
-        :param explanatory_data:
+        :param data_manager:
         :param response_variable:
         :param explanatory_variables:
         :return:
         """
 
-        super().__init__(response_data, explanatory_data, response_variable)
+        super().__init__(data_manager, response_variable)
 
         if explanatory_variables:
             self.set_explanatory_variables(explanatory_variables)
@@ -569,12 +498,12 @@ class MultipleLinearRatingModel(OLSModel):
 
         if self._response_variable and self._explanatory_variables[0]:
 
-            response_var_transform = self._response_variable_transform[self._response_variable]
+            response_var_transform = self._variable_transform[self._response_variable]
             model_response_var = self._get_variable_transform(self._response_variable, response_var_transform)
 
             explanatory_vars_transform = []
             for variable in self._explanatory_variables:
-                explan_transform = self._explanatory_variable_transform[variable]
+                explan_transform = self._variable_transform[variable]
                 explanatory_vars_transform.append(self._get_variable_transform(variable, explan_transform))
 
             model_formula = model_response_var + ' ~ ' + ' + '.join(explanatory_vars_transform)
@@ -592,7 +521,7 @@ class MultipleLinearRatingModel(OLSModel):
         :return:
         """
 
-        self._check_explanatory_variables(variables)
+        self._check_variable_names(variables)
 
         self._explanatory_variables = tuple(variables)
 
@@ -607,8 +536,8 @@ class MultipleLinearRatingModel(OLSModel):
         """
 
         self._check_transform(transform)
-        self._check_explanatory_variables([explanatory_variable])
-        self._explanatory_variable_transform[explanatory_variable] = transform
+        self._check_variable_names([explanatory_variable])
+        self._variable_transform[explanatory_variable] = transform
 
         self._create_model()
 
@@ -616,16 +545,15 @@ class MultipleLinearRatingModel(OLSModel):
 class ComplexRatingModel(OLSModel):
     """"""
 
-    def __init__(self, response_data, explanatory_data, response_variable=None, explanatory_variable=None):
+    def __init__(self, data_manager, response_variable=None, explanatory_variable=None):
         """
 
-        :param response_data:
-        :param explanatory_data:
+        :param data_manager:
         :param response_variable:
         :param explanatory_variable:
         """
 
-        super().__init__(response_data, explanatory_data, response_variable)
+        super().__init__(data_manager, response_variable)
 
         self._explanatory_variable_transform = [None]
 
@@ -685,7 +613,7 @@ class ComplexRatingModel(OLSModel):
 
         if self._response_variable and self._explanatory_variables[0]:
 
-            response_var_transform = self._response_variable_transform[self._response_variable]
+            response_var_transform = self._variable_transform[self._response_variable]
             model_response_var = self._get_variable_transform(self._response_variable, response_var_transform)
 
             explanatory_variables = []
@@ -732,7 +660,7 @@ class ComplexRatingModel(OLSModel):
         :return:
         """
 
-        self._check_explanatory_variables([variable])
+        self._check_variable_names([variable])
         self._explanatory_variables = (variable,)
         self.update_model()
 
@@ -740,12 +668,14 @@ class ComplexRatingModel(OLSModel):
 class CompoundRatingModel(RatingModel):
     """"""
 
-    def __init__(self, response_data, explanatory_data, response_variable=None, explanatory_variable=None):
+    def __init__(self, data_manager, response_variable=None, explanatory_variable=None):
 
-        super().__init__(response_data, explanatory_data, response_variable)
+        super().__init__(data_manager, response_variable)
 
         if explanatory_variable:
             self.set_explanatory_variable(explanatory_variable)
+        else:
+            self.set_explanatory_variable(data_manager.get_variable_names()[1])
 
         self._explanatory_variable_transform = [[None]]
 
@@ -862,7 +792,7 @@ class CompoundRatingModel(RatingModel):
                 self._check_segment_number(segment)
 
                 model_response_variable = self._get_variable_transform(
-                    self._response_variable, self._response_variable_transform[self._response_variable])
+                    self._response_variable, self._variable_transform[self._response_variable])
 
                 model_explanatory_variables = []
 
@@ -976,7 +906,7 @@ class CompoundRatingModel(RatingModel):
         :return:
         """
 
-        self._check_explanatory_variables([explanatory_variable])
+        self._check_variable_names([explanatory_variable])
         self._explanatory_variables = (explanatory_variable,)
 
     def predict_response_variable(self, explanatory_variable):
