@@ -298,8 +298,6 @@ class OLSModel(RatingModel, abc.ABC):
         :return:
         """
 
-        # TODO: Implement OLSModel.predict_response_variable()
-
         if self._model:
 
             # get the model results
@@ -387,7 +385,7 @@ class SimpleLinearRatingModel(OLSModel):
         else:
             self.set_explanatory_variable(data_manager.get_variable_names()[1])
 
-        self.update_model()
+        # self.update_model()
 
     def _get_exogenous_matrix(self, exogenous_df):
         """
@@ -395,7 +393,6 @@ class SimpleLinearRatingModel(OLSModel):
         :param exogenous_df:
         :return:
         """
-        # TODO: Implement SimpleLinearRatingModel._get_exogenous_matrix()
 
         explanatory_variable = self.get_explanatory_variable()
 
@@ -483,8 +480,10 @@ class MultipleLinearRatingModel(OLSModel):
 
         if explanatory_variables:
             self.set_explanatory_variables(explanatory_variables)
+        else:
+            self.set_explanatory_variables(data_manager.get_variable_names()[1:])
 
-        self.update_model()
+        # self.update_model()
 
     def _get_exogenous_matrix(self, exogenous_df):
         """
@@ -492,8 +491,22 @@ class MultipleLinearRatingModel(OLSModel):
         :param exogenous_df:
         :return:
         """
-        # TODO: Implement SimpleLinearRatingModel._get_exogenous_matrix()
-        pass
+
+        for variable in self._explanatory_variables:
+            assert(variable in exogenous_df.keys())
+
+        exog = pd.DataFrame()
+
+        for variable in self._explanatory_variables:
+
+            transform = self._variable_transform[variable]
+            transform_function = self._transform_functions[transform]
+            transformed_variable_name = self._get_variable_transform(variable, transform)
+            exog[transformed_variable_name] = transform_function(exogenous_df[variable])
+
+        exog = sm.add_constant(exog)
+
+        return exog
 
     def get_explanatory_variables(self):
         """
@@ -572,8 +585,10 @@ class ComplexRatingModel(OLSModel):
 
         if explanatory_variable:
             self.set_explanatory_variable(explanatory_variable)
+        else:
+            self.set_explanatory_variable(data_manager.get_variable_names()[1])
 
-        self.update_model()
+        # self.update_model()
 
     def _get_exogenous_matrix(self, exogenous_df):
         """
@@ -589,9 +604,9 @@ class ComplexRatingModel(OLSModel):
 
         for transform in self._explanatory_variable_transform:
 
-            transform_variable_name = self._get_variable_transform(explanatory_variable, transform)
+            transformed_variable_name = self._get_variable_transform(explanatory_variable, transform)
             transform_function = self._transform_functions[transform]
-            exog[transform_variable_name] = transform_function(exogenous_df[explanatory_variable])
+            exog[transformed_variable_name] = transform_function(exogenous_df[explanatory_variable])
 
         exog = sm.add_constant(exog)
 

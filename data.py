@@ -308,8 +308,8 @@ class DataManager:
 
         self._check_origin(data, data_origin)
 
-        self._data = pd.DataFrame(data.copy(deep=True))
-        self._data_origin = data_origin
+        self._data = data.copy(deep=True)
+        self._data_origin = data_origin.copy(deep=True)
 
     def _check_for_concurrent_obs(self, other):
         """Check other DataManager for concurrent observations of a variable. Raise ConcurrentObservationError if
@@ -413,6 +413,7 @@ class DataManager:
             raise ValueError("Date and time information is incorrectly formatted.", file_path)
 
         tab_delimited_df.set_index("DateTime", drop=True, inplace=True)
+        tab_delimited_df = tab_delimited_df.apply(pd.to_numeric, args=('coerce', ))
 
         return tab_delimited_df
 
@@ -474,7 +475,7 @@ class DataManager:
 
                 combined_df.ix[new_df.index, variable] = new_df[variable]
 
-        self._data = combined_df
+        self._data = combined_df.apply(pd.to_numeric, args=('coerce', ))
 
         # combine the variable origin data
         self._data_origin = self._data_origin.append(other._data_origin)
@@ -1008,7 +1009,7 @@ class ADVMSedimentAcousticData(SurrogateData):
         relevant_columns = ['Temp', 'Vbeam']
         dat_df = dat_df.filter(regex=r'(' + '|'.join(relevant_columns) + r')$')
 
-        dat_df.apply(pd.to_numeric)
+        dat_df = dat_df.apply(pd.to_numeric, args=('coerce', ))
 
         return dat_df
 
@@ -1045,7 +1046,7 @@ class ADVMSedimentAcousticData(SurrogateData):
         # remove non-relevant columns
         snr_df = snr_df.filter(regex=r'(^Cell\d{2}(Amp|SNR)\d{1})$')
 
-        snr_df = snr_df.apply(pd.to_numeric)
+        snr_df = snr_df.apply(pd.to_numeric, args=('coerce', ))
 
         return snr_df
 
@@ -1286,9 +1287,9 @@ class ADVMSedimentAcousticData(SurrogateData):
         sac = self._calc_sac(self._wcb.as_matrix(), self._cell_range.as_matrix())
         self._update_sediment_corrected_backscatter(sac)
 
-        mean_scb = pd.Series(self._scb.mean(axis=1), name='MeanSCB')
+        mean_scb = pd.Series(self._scb.mean(axis=1), name='MeanSCB', dtype=np.float)
         # mean_scb.name = 'MeanSCB'
-        sac_df = pd.Series(data=sac, index=mean_scb.index, name='SAC')
+        sac_df = pd.Series(data=sac, index=mean_scb.index, name='SAC', dtype=np.float)
 
         acoustic_data = pd.concat([mean_scb, sac_df], axis=1)
 
