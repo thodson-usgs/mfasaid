@@ -700,18 +700,17 @@ class CompoundRatingModel(RatingModel):
 
         super().__init__(data_manager, response_variable)
 
-        if explanatory_variable:
-            self.set_explanatory_variable(explanatory_variable)
-        else:
-            self.set_explanatory_variable(data_manager.get_variable_names()[1])
-
         self._explanatory_variable_transform = [[None]]
 
         self._breakpoints = np.array([-np.inf, np.inf])
 
         self._model = []
+        # self._create_model_dataset()
 
-        self.update_model()
+        if explanatory_variable:
+            self.set_explanatory_variable(explanatory_variable)
+        else:
+            self.set_explanatory_variable(data_manager.get_variable_names()[1])
 
     def _check_segment_number(self, segment_number):
         """
@@ -731,33 +730,27 @@ class CompoundRatingModel(RatingModel):
 
         self._model = []
 
-        removed_observation_index = self._model_dataset.index.isin(self._excluded_observations)
+        for i in range(len(self._breakpoints)-1):
+            lower_bound = self._breakpoints[i]
+            upper_bound = self._breakpoints[i+1]
 
-        if self.get_response_variable() and self.get_explanatory_variable():
+            segment_range_index = (lower_bound < self._model_dataset.ix[:, self._explanatory_variables[0]]) & \
+                                  (self._model_dataset.ix[:, self._explanatory_variables[0]] <= upper_bound)
 
-            for i in range(len(self._breakpoints)-1):
-                lower_bound = self._breakpoints[i]
-                upper_bound = self._breakpoints[i+1]
+            origin_data = []
+            for variable in self._response_variable, self._explanatory_variables[0]:
+                for origin in self._data_manager.get_variable_origin(variable):
+                    origin_data.append([variable, origin])
+            model_data_origin = pd.DataFrame(data=origin_data, columns=['variable', 'origin'])
 
-                segment_range_index = (lower_bound < self._model_dataset.ix[:, self._explanatory_variables[0]]) & \
-                                      (self._model_dataset.ix[:, self._explanatory_variables[0]] <= upper_bound)
+            segment_data_manager = data.DataManager(self._model_dataset.ix[segment_range_index, :], model_data_origin)
 
-                model_subset = segment_range_index & ~removed_observation_index
+            segment_model = ComplexRatingModel(segment_data_manager,
+                                               response_variable=self.get_response_variable(),
+                                               explanatory_variable=self.get_explanatory_variable())
+            segment_model.exclude_observation(self.get_excluded_observations())
 
-                model_formula = self.get_model_formula(i+1)
-
-                try:
-                    segment_model = smf.ols(model_formula,
-                                            data=self._model_dataset,
-                                            subset=model_subset,
-                                            missing='drop')
-                except ValueError as err:
-                    if err.args[0] == "zero-size array to reduction operation maximum which has no identity":
-                        segment_model = None
-                    else:
-                        raise err
-
-                self._model.append(segment_model)
+            self._model.append(segment_model)
 
     def add_breakpoint(self, new_breakpoint):
         """
@@ -775,7 +768,7 @@ class CompoundRatingModel(RatingModel):
 
         self._create_model()
 
-    def add_explanatory_var_transform(self, segment, transform):
+    def add_explanatory_var_transform(self, transform, segment=None):
         """
 
         :param segment:
@@ -783,12 +776,14 @@ class CompoundRatingModel(RatingModel):
         :return:
         """
 
-        self._check_segment_number(segment)
         self._check_transform(transform)
 
-        self._explanatory_variable_transform[segment-1].append(transform)
-
-        self._create_model()
+        if segment:
+            self._check_segment_number(segment)
+            self._model[segment-1].add_explanatory_var_transform(transform)
+        else:
+            for segment_model in self._model:
+                segment_model.add_explanatory_var_transform(transform)
 
     def get_breakpoints(self):
         """
@@ -815,32 +810,17 @@ class CompoundRatingModel(RatingModel):
 
         if segment:
 
-            if self.get_response_variable() and self.get_explanatory_variable():
+            self._check_segment_number(segment)
 
-                self._check_segment_number(segment)
-
-                model_response_variable = self._get_variable_transform(
-                    self._response_variable, self._variable_transform[self._response_variable])
-
-                model_explanatory_variables = []
-
-                for transform in self._explanatory_variable_transform[segment-1]:
-                    model_explanatory_variables.append(
-                        self._get_variable_transform(self._explanatory_variables[0], transform))
-
-                model_formula = model_response_variable + ' ~ ' + ' + '.join(model_explanatory_variables)
-
-            else:
-
-                model_formula = None
+            model_formula = self._model[segment-1].get_model_formula()
 
         else:
 
             model_formula = []
 
-            for i in range(0, self.get_number_of_segments()):
+            for segment_model in self._model:
 
-                model_formula.append(self.get_model_formula(i+1))
+                model_formula.append(segment_model.get_model_formula())
 
         return model_formula
 
@@ -881,7 +861,7 @@ class CompoundRatingModel(RatingModel):
 
         self._create_model()
 
-    def remove_explanatory_var_transform(self, segment, transform):
+    def remove_explanatory_var_transform(self, transform, segment=None):
         """
 
         :param segment:
@@ -889,12 +869,14 @@ class CompoundRatingModel(RatingModel):
         :return:
         """
 
-        self._check_segment_number(segment)
+        if segment:
+            self._check_segment_number(segment)
+            self._model[segment-1].remove_explanatory_var_transform(transform)
 
-        if transform in self._explanatory_variable_transform:
-            self._explanatory_variable_transform[segment-1].remove(transform)
-            if len(self._explanatory_variable_transform[segment-1]) < 1:
-                self.reset_explanatory_var_transform(segment)
+        else:
+
+            for segment_model in self._model:
+                segment_model.remove_explanatory_var_transform(transform)
 
     def reset_breakpoints(self):
         """
@@ -919,13 +901,13 @@ class CompoundRatingModel(RatingModel):
 
             self._check_segment_number(segment)
 
-            self._explanatory_variable_transform[segment-1] = [None]
+            self._model[segment-1].reset_explanatory_var_transform()
 
         else:
 
-            self._explanatory_variable_transform = [[None] for _ in range(self.get_number_of_segments())]
+            for segment_model in self._model:
 
-        self._create_model()
+                segment_model.reset_explanatory_var_transform()
 
     def set_explanatory_variable(self, explanatory_variable):
         """
@@ -936,6 +918,20 @@ class CompoundRatingModel(RatingModel):
 
         self._check_variable_names([explanatory_variable])
         self._explanatory_variables = (explanatory_variable,)
+
+        self.update_model()
+
+    def transform_response_variable(self, transform):
+        """
+
+        :param transform:
+        :return:
+        """
+
+        self._check_transform(transform)
+
+        for segment_model in self._model:
+            segment_model.transform_response_variable(transform)
 
     def predict_response_variable(self, explanatory_variable):
         """
