@@ -56,7 +56,7 @@ class RatingModel(abc.ABC):
     def __init__(self, data_manager, response_variable=None):
         """Initialize a RatingModel object.
 
-        :param data_manager:
+        :param data_manager: Data manager containing response and explanatory variables.
         :type data_manager: data.DataManager
         :param response_variable:
         """
@@ -84,6 +84,7 @@ class RatingModel(abc.ABC):
         # noinspection PyUnresolvedReferences
         self._excluded_observations = pd.tseries.index.DatetimeIndex([], name='DateTime')
         self._model_dataset = pd.DataFrame()
+        self._model_data_origin = pd.DataFrame(columns=['variable', 'origin'])
 
         # initialize the variable transform dictionary
         self._variable_transform = {}
@@ -132,6 +133,13 @@ class RatingModel(abc.ABC):
 
         self._model_dataset = mdl_dataset
 
+        origin_data = []
+        for variable in (self._response_variable,) + self._explanatory_variables:
+            for origin in self._data_manager.get_variable_origin(variable):
+                origin_data.append([variable, origin])
+
+        self._model_data_origin = pd.DataFrame(data=origin_data, columns=['variable', 'origin'])
+
     @classmethod
     def _get_variable_transform(cls, variable, transform):
         """
@@ -147,6 +155,7 @@ class RatingModel(abc.ABC):
         """Exclude the observation given by observation_time from the model
 
         :param observation_time:
+        :type observation_time:
         :return:
         """
 
@@ -206,7 +215,12 @@ class RatingModel(abc.ABC):
         self._create_model()
 
     def set_response_variable(self, response_variable):
-        """Set the response variable."""
+        """Set the response variable of the model.
+
+        :param response_variable:
+        :type response_variable: abc.basestring
+        :return:
+        """
 
         self._check_variable_names([response_variable])
 
@@ -215,7 +229,11 @@ class RatingModel(abc.ABC):
         self.update_model()
 
     def transform_response_variable(self, transform):
-        """Transform the response variable."""
+        """
+
+        :param transform:
+        :return:
+        """
 
         self._check_transform(transform)
         self._variable_transform[self._response_variable] = transform
@@ -246,25 +264,20 @@ class OLSModel(RatingModel, abc.ABC):
         :return:
         """
 
-        if self._response_variable and self._explanatory_variables[0]:
+        model_formula = self.get_model_formula()
 
-            model_formula = self.get_model_formula()
+        removed_observation_index = self._model_dataset.index.isin(self._excluded_observations)
 
-            removed_observation_index = self._model_dataset.index.isin(self._excluded_observations)
-
-            try:
-                model = smf.ols(model_formula,
-                                data=self._model_dataset,
-                                subset=~removed_observation_index,
-                                missing='drop')
-            except ValueError as err:
-                if err.args[0] == "zero-size array to reduction operation maximum which has no identity":
-                    model = None
-                else:
-                    raise err
-
-        else:
-            model = None
+        try:
+            model = smf.ols(model_formula,
+                            data=self._model_dataset,
+                            subset=~removed_observation_index,
+                            missing='drop')
+        except ValueError as err:
+            if err.args[0] == "zero-size array to reduction operation maximum which has no identity":
+                model = None
+            else:
+                raise err
 
         self._model = model
 
@@ -359,10 +372,11 @@ class OLSModel(RatingModel, abc.ABC):
             predicted_data = self._inverse_transform_functions[response_variable_transform](prediction_results)
 
             predicted = pd.DataFrame(data=predicted_data, index=explanatory_df.index, columns=columns)
+            predicted = predicted.join(explanatory_df[list(self._explanatory_variables)], how='outer')
 
         else:
 
-            predicted = pd.DataFrame(columns=[self._response_variable])
+            predicted = pd.DataFrame(columns=[self._response_variable] + list(self._explanatory_variables))
 
         return predicted
 
@@ -730,12 +744,12 @@ class CompoundRatingModel(RatingModel):
 
         self._model = []
 
-        for i in range(len(self._breakpoints)-1):
+        for i in range(self.get_number_of_segments()):
             lower_bound = self._breakpoints[i]
             upper_bound = self._breakpoints[i+1]
 
-            segment_range_index = (lower_bound < self._model_dataset.ix[:, self._explanatory_variables[0]]) & \
-                                  (self._model_dataset.ix[:, self._explanatory_variables[0]] <= upper_bound)
+            segment_range_index = (lower_bound <= self._model_dataset.ix[:, self._explanatory_variables[0]]) & \
+                                  (self._model_dataset.ix[:, self._explanatory_variables[0]] < upper_bound)
 
             origin_data = []
             for variable in self._response_variable, self._explanatory_variables[0]:
@@ -933,13 +947,35 @@ class CompoundRatingModel(RatingModel):
         for segment_model in self._model:
             segment_model.transform_response_variable(transform)
 
-    def predict_response_variable(self, explanatory_variable):
+    def predict_response_variable(self, explanatory_data=None, bias_correction=False, prediction_interval=False):
         """
 
-        :param explanatory_variable:
+        :param explanatory_data:
+        :param bias_correction:
+        :param prediction_interval:
         :return:
         """
 
-        # TODO: Implement CompoundRatingModel.predict_response_variable)
+        predicted = pd.DataFrame()
 
-        pass
+        if explanatory_data:
+            explanatory_df = explanatory_data.get_data()
+            explanatory_origin = explanatory_data.get_origin()
+        else:
+            explanatory_df = self._model_dataset.copy(deep=True)
+            explanatory_origin = self._model_data_origin.copy(deep=True)
+
+        explanatory_series = explanatory_df[self.get_explanatory_variable()]
+
+        for i in range(self.get_number_of_segments()):
+            lower_bound = self._breakpoints[i]
+            upper_bound = self._breakpoints[i+1]
+            segment_index = (lower_bound <= explanatory_series) & (explanatory_series < upper_bound)
+            predictor_data_manager = data.DataManager(explanatory_df.ix[segment_index, :],
+                                                      explanatory_origin)
+            segment_predicted = self._model[i].predict_response_variable(explanatory_data=predictor_data_manager,
+                                                                         bias_correction=bias_correction,
+                                                                         prediction_interval=prediction_interval)
+            predicted = pd.concat([predicted, segment_predicted])
+
+        return predicted

@@ -559,7 +559,7 @@ class DataManager:
         return variable_origin
 
     @classmethod
-    def read_tab_delimited_data(cls, file_path, params=None):
+    def read_tab_delimited_data(cls, file_path):
         """Read a tab-delimited file containing a time series and return a DataManager instance.
 
         :param file_path: File path containing the TAB-delimited ASCII data file
