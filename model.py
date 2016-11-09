@@ -285,6 +285,88 @@ class OLSModel(RatingModel, abc.ABC):
     def _get_exogenous_matrix(self, exogenous_df):
         pass
 
+    def get_model_dataset(self):
+        """Returns a pandas DataFrame containing the following columns:
+
+            Observed response variable
+            Observed explanatory variables
+            Missing and excluded observation indicators
+            Fitted transformed response variable
+            Raw residual
+            Estimated response variable, with Duan smearing estimate applied
+            Normal quantile
+            Standardized (internally studentized) residual
+            Leverage
+            Cook's distance
+            DFFITS
+
+        :return:
+        """
+
+        model_dataset = super().get_model_dataset()
+
+        res = self._model.fit()
+
+        model_data_index = res.resid.index
+
+        response_variable = self.get_response_variable()
+
+        # add fitted values
+        response_variable_transform = self._variable_transform[response_variable]
+        transformed_response_variable_name = self._get_variable_transform(response_variable,
+                                                                          response_variable_transform)
+        fitted_values = res.fittedvalues.rename('Fitted ' + transformed_response_variable_name)
+
+        # add raw residuals
+        raw_residuals = res.resid.rename('Raw Residual')
+
+        # add estimated response
+        explanatory_data = data.DataManager(self._model_dataset.ix[model_data_index, :], self._model_data_origin)
+        predicted_response = self.predict_response_variable(explanatory_data=explanatory_data, bias_correction=True)
+        estimated_response = predicted_response[response_variable]
+        estimated_response = estimated_response.rename('Estimated ' + response_variable)
+
+        # add normal quantile
+        plotting_position = (res.resid.rank()-0.4)/(res.nobs+0.2)
+        normal_quantile = res.resid.quantile(plotting_position)
+        normal_series = pd.Series(index=model_data_index,
+                                  data=normal_quantile[plotting_position].as_matrix(),
+                                  name='Normal Quantile')
+
+        ols_influence = res.get_influence()
+
+        # add standardized residuals (also known as internally studentized residuals)
+        standardized_residuals = pd.Series(index=model_data_index,
+                                           data=ols_influence.resid_studentized_internal,
+                                           name='Standardized Residual')
+
+        # add leverage
+        leverage = pd.Series(index=model_data_index,
+                             data=ols_influence.hat_matrix_diag,
+                             name='Leverage')
+
+        # add Cook's D
+        cooks_distance = pd.Series(index=model_data_index,
+                                   data=ols_influence.cooks_distance[0],
+                                   name="Cook's Distance")
+
+        # add DFFITS
+        dffits = pd.Series(index=model_data_index,
+                           data=ols_influence.dffits[0],
+                           name="DFFITS")
+
+        model_dataset = pd.concat([model_dataset,
+                                   fitted_values,
+                                   raw_residuals,
+                                   estimated_response,
+                                   normal_series,
+                                   standardized_residuals,
+                                   leverage,
+                                   cooks_distance,
+                                   dffits], axis=1)
+
+        return model_dataset
+
     @abc.abstractmethod
     def get_model_formula(self):
         pass
@@ -814,6 +896,23 @@ class CompoundRatingModel(RatingModel):
         """
 
         return self._explanatory_variables[0]
+
+    def get_model_dataset(self):
+        """
+
+        :return:
+        """
+
+        model_dataset = pd.DataFrame()
+
+        for i in range(self.get_number_of_segments()):
+            segment_model_dataset = self._model[i].get_model_dataset()
+            segment_model_dataset['Segment'] = i+1
+            model_dataset = pd.concat([model_dataset, segment_model_dataset], verify_integrity=True)
+
+        model_dataset.sort_index(inplace=True)
+
+        return model_dataset
 
     def get_model_formula(self, segment=None):
         """
