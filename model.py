@@ -2,13 +2,15 @@ import abc
 import copy
 
 import numpy as np
-
-# needed for variable transformations
 from numpy import log, log10, power
+
+from scipy import stats
 
 import pandas as pd
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
+from statsmodels.iolib.table import SimpleTable
+from statsmodels.iolib.summary import Summary
 from statsmodels.sandbox.regression.predstd import wls_prediction_std
 
 import data
@@ -93,6 +95,48 @@ class RatingModel(abc.ABC):
 
         # initialize the model attribute
         self._model = None
+
+    @staticmethod
+    def _calc_plotting_position(x, a=0.4):
+        """
+
+        :param data:
+        :param a:
+        :return:
+        """
+
+        x = np.asarray(x)
+
+        Nx = x.shape[0]
+
+        sorted_index = np.argsort(x)
+
+        rank = np.zeros(Nx, int)
+        rank[sorted_index] = np.arange(Nx) + 1
+
+        pp = (rank - a) / (Nx + 1 - 2 * a)
+
+        return pp
+
+    @staticmethod
+    def _calc_quantile(x, q):
+        """
+
+        :param x:
+        :param q:
+        :return:
+        """
+
+        pp = RatingModel._calc_plotting_position(x)
+
+        sorted_index = np.argsort(x)
+
+        xp = x[sorted_index]
+        pp = pp[sorted_index]
+
+        quantile = np.interp(q, pp, xp)
+
+        return quantile
 
     @classmethod
     def _check_transform(cls, transform):
@@ -258,6 +302,35 @@ class RatingModel(abc.ABC):
 class OLSModel(RatingModel, abc.ABC):
     """Ordinary least squares (OLS) regression based rating model abstract class."""
 
+    def _calc_ppcc(self):
+        """Calculate the probability plot correlation coefficient
+
+        :return:
+        """
+
+        res = self._model.fit()
+        normal_quantile = self._calc_res_normal_quantile()
+
+        ppcc, _ = stats.pearsonr(normal_quantile, res.resid)
+
+        return ppcc
+
+    def _calc_res_normal_quantile(self):
+        """
+
+        :return:
+        """
+
+        res = self._model.fit()
+        plotting_position = self._calc_plotting_position(res.resid)
+        loc, scale = stats.norm.fit(res.resid)
+        dist = stats.norm(loc, scale)
+        normal_quantile = dist.ppf(plotting_position)
+
+        quantile_series = pd.Series(index=res.resid.index, data=normal_quantile, name='Normal quantile of residual')
+
+        return quantile_series
+
     def _create_model(self):
         """
 
@@ -284,6 +357,91 @@ class OLSModel(RatingModel, abc.ABC):
     @abc.abstractmethod
     def _get_exogenous_matrix(self, exogenous_df):
         pass
+
+    def _get_model_equation(self):
+        """
+
+        :return:
+        """
+
+        res = self._model.fit()
+
+        # get the model equation with the estimated coefficients
+        response_variable = self._get_variable_transform(self._response_variable,
+                                                         self._variable_transform[self._response_variable])
+        explanatory_variables = []
+        for variable in self._explanatory_variables:
+            variable_name = self._get_variable_transform(variable, self._variable_transform[variable])
+            explanatory_variables.append('{:.5g}'.format(res.params[variable_name]) + variable_name)
+        model_equation = response_variable + ' = ' \
+            + '{:.5g}'.format(res.params['Intercept']) + ' + '\
+            + ' + '.join(explanatory_variables)
+
+        return SimpleTable(data=[[model_equation]], headers=['Linear regression model:'])
+
+    def _get_variable_summary(self, model_variables, table_title):
+        """
+
+        :param model_variables:
+        :param table_title:
+        :return:
+        """
+
+        table_data = [[''], ['Minimum'], ['1st Quartile'], ['Median'], ['Mean'], ['3rd Quartile'], ['Maximum']]
+
+        number_format_str = '{:.5g}'
+
+        q = np.array([0, 0.25, 0.5, 0.75, 1])
+
+        for variable in model_variables:
+
+            variable_series = self._model_dataset[variable]
+
+            quantiles = self._calc_quantile(variable_series, q)
+
+            table_data[0].append(variable)
+            table_data[1].append(number_format_str.format(quantiles[0]))
+            table_data[2].append(number_format_str.format(quantiles[1]))
+            table_data[3].append(number_format_str.format(quantiles[2]))
+            table_data[4].append(number_format_str.format(variable_series.mean()))
+            table_data[5].append(number_format_str.format(quantiles[3]))
+            table_data[6].append(number_format_str.format(quantiles[4]))
+
+            variable_transform = self._variable_transform[variable]
+
+            if variable_transform:
+
+                variable_transform_name = self._get_variable_transform(variable, variable_transform)
+
+                transform_function = self._transform_functions[variable_transform]
+
+                variable_transform_series = transform_function(variable_series)
+
+                table_data[0].append(variable_transform_name)
+                table_data[1].append(number_format_str.format(variable_transform_series.min()))
+                table_data[2].append(number_format_str.format(variable_transform_series.quantile(0.25)))
+                table_data[3].append(number_format_str.format(variable_transform_series.quantile(0.5)))
+                table_data[4].append(number_format_str.format(variable_transform_series.mean()))
+                table_data[5].append(number_format_str.format(variable_transform_series.quantile(0.75)))
+                table_data[6].append(number_format_str.format(variable_transform_series.max()))
+
+        table_header = [table_title]
+
+        table_header.extend([''] * (len(table_data[0])-1))
+
+        variable_summary = SimpleTable(data=table_data, headers=table_header)
+
+        return variable_summary
+
+    def get_explanatory_variable_summary(self):
+        """
+
+        :return:
+        """
+
+        table_title = 'Explanatory variable summary'
+
+        return self._get_variable_summary(self._explanatory_variables, table_title)
 
     def get_model_dataset(self):
         """Returns a pandas DataFrame containing the following columns:
@@ -326,12 +484,8 @@ class OLSModel(RatingModel, abc.ABC):
         estimated_response = predicted_response[response_variable]
         estimated_response = estimated_response.rename('Estimated ' + response_variable)
 
-        # add normal quantile
-        plotting_position = (res.resid.rank()-0.4)/(res.nobs+0.2)
-        normal_quantile = res.resid.quantile(plotting_position)
-        normal_series = pd.Series(index=model_data_index,
-                                  data=normal_quantile[plotting_position].as_matrix(),
-                                  name='Normal Quantile')
+        # add quantile
+        quantile_series = self._calc_res_normal_quantile()
 
         ols_influence = res.get_influence()
 
@@ -359,7 +513,7 @@ class OLSModel(RatingModel, abc.ABC):
                                    fitted_values,
                                    raw_residuals,
                                    estimated_response,
-                                   normal_series,
+                                   quantile_series,
                                    standardized_residuals,
                                    leverage,
                                    cooks_distance,
@@ -371,18 +525,81 @@ class OLSModel(RatingModel, abc.ABC):
     def get_model_formula(self):
         pass
 
+    def get_model_report(self):
+        """
+
+        :return:
+        """
+
+        # get a table for the data origins
+        data_origin = []
+        for variable in (self._response_variable, ) + self._explanatory_variables:
+            for origin in self._data_manager.get_variable_origin(variable):
+                if origin not in data_origin:
+                    data_origin.append([origin])
+        origin_table = SimpleTable(data=data_origin, headers=['Data file location'])
+
+        model_equation = self._get_model_equation()
+
+        # get the model summary
+        model_report = self.get_model_summary()
+
+        # create a SimpleTable for the model dataset
+        model_dataset = self.get_model_dataset()
+        index_as_str = np.expand_dims(model_dataset.index.astype(str), 1)
+        observation_data = np.column_stack((index_as_str, model_dataset.as_matrix()))
+        observation_data_headers = ['DateTime']
+        observation_data_headers.extend(model_dataset.keys())
+        observation_table = SimpleTable(data=observation_data, headers=observation_data_headers)
+
+        response_variable_summary = self.get_response_variable_summary()
+        explanatory_variable_summary = self.get_explanatory_variable_summary()
+
+        model_report.tables.extend([model_equation,
+                                    origin_table,
+                                    response_variable_summary,
+                                    explanatory_variable_summary,
+                                    observation_table])
+
+        return model_report
+
     def get_model_summary(self):
         """
 
         :return:
         """
 
-        try:
-            summary = self._model.fit().summary()
-        except AttributeError:
-            summary = None
+        summary = Summary()
+        res = self._model.fit()
+
+        string_format = '{:.5g}'
+
+        number_of_observations = ('Number of observations', [string_format.format(res.nobs)])
+        error_degrees_of_freedom = ('Error degrees of freedom', [string_format.format(res.df_resid)])
+        rmse = ('Root mean squared error', [string_format.format(np.sqrt(res.mse_resid))])
+        rsquared = ('R-squared', [string_format.format(res.rsquared)])
+        adjusted_rsquared = ('Adjusted R-squared', [string_format.format(res.rsquared_adj)])
+        fvalue = ('F-statistic vs. constant model', [string_format.format(res.fvalue)])
+        pvalue = ('p-value', [string_format.format(res.f_pvalue)])
+
+        gleft = [number_of_observations, error_degrees_of_freedom, rmse]
+        gright = [rsquared, adjusted_rsquared, fvalue, pvalue]
+
+        summary.add_table_2cols(res, gleft=gleft, gright=gright)
+
+        summary.add_table_params(res, alpha=0.1)
 
         return summary
+
+    def get_response_variable_summary(self):
+        """
+
+        :return:
+        """
+
+        table_title = 'Response variable summary'
+
+        return self._get_variable_summary((self._response_variable, ), table_title)
 
     def predict_response_variable(self, explanatory_data=None, bias_correction=False, prediction_interval=False):
         """

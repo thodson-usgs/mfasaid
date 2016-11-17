@@ -644,6 +644,14 @@ class ConstituentData(DataManager):
 
         return self._surrogate_variable_avg_window[surrogate_variable_name]
 
+    def get_surrogate_data_manager(self):
+        """Returns the surrogate data manager instance.
+
+        :return:
+        """
+
+        return self._surrogate_data
+
     def set_surrogate_avg_window(self, surrogate_variable_name, avg_window):
         """
 
