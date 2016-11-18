@@ -11,7 +11,9 @@ import statsmodels.api as sm
 import statsmodels.formula.api as smf
 from statsmodels.iolib.table import SimpleTable
 from statsmodels.iolib.summary import Summary
+from statsmodels.iolib.tableformatting import fmt_params
 from statsmodels.sandbox.regression.predstd import wls_prediction_std
+from statsmodels.stats.outliers_influence import variance_inflation_factor
 
 import data
 
@@ -28,11 +30,6 @@ class InvalidModelVariableNameError(ModelException):
 
 class InvalidVariableTransformError(ModelException):
     """Raise when an invalid variable transform is encountered."""
-    pass
-
-
-class ModelVariableRangeError(ModelException):
-    """Raise when an invalid variable range is encountered."""
     pass
 
 
@@ -54,6 +51,7 @@ class RatingModel(abc.ABC):
                                     'log10': lambda x: power(10, x),
                                     'pow2': lambda x: power(x, 1/2)
                                     }
+    _float_string_format = '{:.5g}'
 
     def __init__(self, data_manager, response_variable=None):
         """Initialize a RatingModel object.
@@ -97,7 +95,7 @@ class RatingModel(abc.ABC):
         self._model = None
 
     @staticmethod
-    def _calc_plotting_position(x, a=0.4):
+    def _calc_plotting_position(x, a=0.5):
         """
 
         :param data:
@@ -184,6 +182,22 @@ class RatingModel(abc.ABC):
 
         self._model_data_origin = pd.DataFrame(data=origin_data, columns=['variable', 'origin'])
 
+    def _get_dataset_table(self):
+        """Create a SimpleTable for the model dataset
+
+        :return:
+        """
+
+        model_dataset = self.get_model_dataset()
+        index_as_str = np.expand_dims(model_dataset.index.astype(str), 1)
+        observation_data = np.column_stack((index_as_str, model_dataset.as_matrix()))
+        observation_data_headers = ['DateTime']
+        observation_data_headers.extend(model_dataset.keys())
+        observation_table = SimpleTable(data=observation_data,
+                                        headers=observation_data_headers)
+
+        return observation_table
+
     @classmethod
     def _get_variable_transform(cls, variable, transform):
         """
@@ -196,10 +210,10 @@ class RatingModel(abc.ABC):
         return cls._transform_variable_names[transform].replace('x', variable)
 
     def exclude_observation(self, observation_time):
-        """Exclude the observation given by observation_time from the model
+        """Exclude observation from the model.
 
         :param observation_time:
-        :type observation_time:
+        :type observation_time: pandas.tseries.index.DatetimeIndex
         :return:
         """
 
@@ -238,8 +252,7 @@ class RatingModel(abc.ABC):
         return self._response_variable
 
     def get_variable_names(self):
-        """Return a tuple containing the variable names within the model.
-        """
+        """Return a tuple containing the variable names within the model."""
 
         return tuple(self._data_manager.get_variable_names())
 
@@ -262,7 +275,7 @@ class RatingModel(abc.ABC):
         """Set the response variable of the model.
 
         :param response_variable:
-        :type response_variable: abc.basestring
+        :type response_variable: string
         :return:
         """
 
@@ -273,9 +286,9 @@ class RatingModel(abc.ABC):
         self.update_model()
 
     def transform_response_variable(self, transform):
-        """
+        """Transform the response variable.
 
-        :param transform:
+        :param transform: String representation of variable transform
         :return:
         """
 
@@ -316,7 +329,7 @@ class OLSModel(RatingModel, abc.ABC):
         return ppcc
 
     def _calc_res_normal_quantile(self):
-        """
+        """Calculate the normal quantiles of the residuals.
 
         :return:
         """
@@ -332,7 +345,7 @@ class OLSModel(RatingModel, abc.ABC):
         return quantile_series
 
     def _create_model(self):
-        """
+        """Create the ordinary least squares linear regression model.
 
         :return:
         """
@@ -341,16 +354,10 @@ class OLSModel(RatingModel, abc.ABC):
 
         removed_observation_index = self._model_dataset.index.isin(self._excluded_observations)
 
-        try:
-            model = smf.ols(model_formula,
-                            data=self._model_dataset,
-                            subset=~removed_observation_index,
-                            missing='drop')
-        except ValueError as err:
-            if err.args[0] == "zero-size array to reduction operation maximum which has no identity":
-                model = None
-            else:
-                raise err
+        model = smf.ols(model_formula,
+                        data=self._model_dataset,
+                        subset=~removed_observation_index,
+                        missing='drop')
 
         self._model = model
 
@@ -358,29 +365,174 @@ class OLSModel(RatingModel, abc.ABC):
     def _get_exogenous_matrix(self, exogenous_df):
         pass
 
-    def _get_model_equation(self):
+    def _get_left_summary_table(self, res):
+        """Get the left side of the model summary table.
+
+        :return:
         """
+
+        number_of_observations = ('Number of observations', [self._float_string_format.format(res.nobs)])
+        error_degrees_of_freedom = ('Error degrees of freedom', [self._float_string_format.format(res.df_resid)])
+        rmse = ('Root mean squared error', [self._float_string_format.format(np.sqrt(res.mse_resid))])
+        ppcc = ('Residual PPCC', [self._float_string_format.format(self._calc_ppcc())])
+
+        gleft = [number_of_observations, error_degrees_of_freedom, rmse, ppcc]
+
+        response_variable_transform = self._variable_transform[self._response_variable]
+
+        if response_variable_transform:
+
+            if response_variable_transform is 'log10':
+
+                bcf = ('Non-parametric smearing bias correction factor',
+                       [self._float_string_format.format(np.power(10, res.resid).mean())])
+
+                gleft.append(bcf)
+
+            elif response_variable_transform is 'log':
+
+                bcf = ('Non-parmetric smearic bias correction factor',
+                       [self._float_string_format.format(np.exp(res.resid).mean())])
+
+                gleft.append(bcf)
+
+        return gleft
+
+    def _get_model_equation(self):
+        """Get a string representation of the model equation with estimated coefficients.
 
         :return:
         """
 
         res = self._model.fit()
 
-        # get the model equation with the estimated coefficients
-        response_variable = self._get_variable_transform(self._response_variable,
-                                                         self._variable_transform[self._response_variable])
         explanatory_variables = []
-        for variable in self._explanatory_variables:
-            variable_name = self._get_variable_transform(variable, self._variable_transform[variable])
-            explanatory_variables.append('{:.5g}'.format(res.params[variable_name]) + variable_name)
-        model_equation = response_variable + ' = ' \
-            + '{:.5g}'.format(res.params['Intercept']) + ' + '\
-            + ' + '.join(explanatory_variables)
+        for variable in self._model.exog_names:
+            if variable is 'Intercept':
+                explanatory_variables.append(self._float_string_format.format(res.params[variable]))
+            else:
+                explanatory_variables.append(self._float_string_format.format(res.params[variable]) + variable)
+
+        response_variable = self._model.endog_names
+
+        model_equation = response_variable + ' = ' + ' + '.join(explanatory_variables)
 
         return SimpleTable(data=[[model_equation]], headers=['Linear regression model:'])
 
-    def _get_variable_summary(self, model_variables, table_title):
+    def _get_params_summary(self, alpha=0.1):
+        """create a summary table for the parameters
+
+        Parameters
+        ----------
+        alpha : float
+            significance level for the confidence intervals
+
+        Returns
+        -------
+        params_table : SimpleTable instance
         """
+
+        # TODO: Acknowledge that this code was modified from the statsmodels package
+
+        results = self._model.fit()
+
+        def forg(x, prec=3):
+            if prec == 3:
+                # for 3 decimals
+                if (abs(x) >= 1e4) or (abs(x) < 1e-4):
+                    return '%9.3g' % x
+                else:
+                    return '%9.3f' % x
+            elif prec == 4:
+                if (abs(x) >= 1e4) or (abs(x) < 1e-4):
+                    return '%10.4g' % x
+                else:
+                    return '%10.4f' % x
+            else:
+                raise NotImplementedError
+
+        # Parameters part of the summary table
+        conf_int = results.conf_int(alpha)
+
+        # Dictionary to store the header names for the parameter part of the
+        # summary table. look up by modeltype
+        alp = str((1 - alpha) * 100) + '%'
+
+        param_header = ['coef', 'std err', 't', 'P>|t|',
+                        '[' + alp + ' Conf. Int.]']
+
+        xname = self._model.exog_names
+
+        params_stubs = xname
+
+        exog_idx = range(len(xname))
+
+        # center confidence intervals if they are unequal lengths
+        confint = ["%s %s" % tuple(map(forg, conf_int.ix[i])) for i in exog_idx]
+        len_ci = list(map(len, confint))
+        max_ci = max(len_ci)
+        min_ci = min(len_ci)
+
+        if min_ci < max_ci:
+            confint = [ci.center(max_ci) for ci in confint]
+
+        # explicit f/g formatting, now uses forg, f or g depending on values
+        params_data = zip([forg(results.params[i], prec=4) for i in exog_idx],
+                          [forg(results.bse[i]) for i in exog_idx],
+                          [forg(results.tvalues[i]) for i in exog_idx],
+                          # ["%#6.3f" % (results.pvalues[i]) for i in exog_idx],
+                          ["%#6.3g" % (results.pvalues[i]) for i in exog_idx],
+                          confint
+                          )
+        params_data = list(params_data)
+        parameter_table = SimpleTable(params_data,
+                                      param_header,
+                                      params_stubs,
+                                      txt_fmt=fmt_params
+                                      )
+
+        if results.params.shape[0] > 2:
+            vif_table = self._get_vif_table()
+            parameter_table.extend_right(vif_table)
+
+        return parameter_table
+
+    def _get_right_summary_table(self, res):
+        """Get the right side of the model summary table.
+
+        :return:
+        """
+
+        rsquared = ('R-squared', [self._float_string_format.format(res.rsquared)])
+        adjusted_rsquared = ('Adjusted R-squared', [self._float_string_format.format(res.rsquared_adj)])
+        fvalue = ('F-statistic vs. constant model', [self._float_string_format.format(res.fvalue)])
+        pvalue = ('p-value', [self._float_string_format.format(res.f_pvalue)])
+
+        gright = [rsquared, adjusted_rsquared, fvalue, pvalue]
+
+        response_variable_transform = self._variable_transform[self._response_variable]
+
+        if response_variable_transform:
+
+            if response_variable_transform is 'log10':
+
+                RMSE_pct = ('RMSE(%)',
+                            [self._float_string_format.format(100*np.sqrt(np.exp(np.log(10)**2 * res.mse_resid)-1))])
+
+                gright.append(RMSE_pct)
+
+            elif response_variable_transform is 'log':
+
+                RMSE_pct = ('RMSE(%)',
+                            [self._float_string_format.format(
+                                100 * np.sqrt(np.exp(res.mse_resid) - 1))])
+
+                gright.append(RMSE_pct)
+
+        return gright
+
+    def _get_variable_summary(self, model_variables, table_title=''):
+        """Get a summary of a variable.
 
         :param model_variables:
         :param table_title:
@@ -393,9 +545,12 @@ class OLSModel(RatingModel, abc.ABC):
 
         q = np.array([0, 0.25, 0.5, 0.75, 1])
 
+        excluded_observations = self._model_dataset.index.isin(self._excluded_observations) | \
+            np.any(self._model_dataset.isnull(), axis=1)
+
         for variable in model_variables:
 
-            variable_series = self._model_dataset[variable]
+            variable_series = self._model_dataset.ix[~excluded_observations, variable]
 
             quantiles = self._calc_quantile(variable_series, q)
 
@@ -415,15 +570,17 @@ class OLSModel(RatingModel, abc.ABC):
 
                 transform_function = self._transform_functions[variable_transform]
 
-                variable_transform_series = transform_function(variable_series)
+                transformed_variable_series = transform_function(variable_series)
+
+                transform_quantiles = self._calc_quantile(transformed_variable_series, q)
 
                 table_data[0].append(variable_transform_name)
-                table_data[1].append(number_format_str.format(variable_transform_series.min()))
-                table_data[2].append(number_format_str.format(variable_transform_series.quantile(0.25)))
-                table_data[3].append(number_format_str.format(variable_transform_series.quantile(0.5)))
-                table_data[4].append(number_format_str.format(variable_transform_series.mean()))
-                table_data[5].append(number_format_str.format(variable_transform_series.quantile(0.75)))
-                table_data[6].append(number_format_str.format(variable_transform_series.max()))
+                table_data[1].append(number_format_str.format(transform_quantiles[0]))
+                table_data[2].append(number_format_str.format(transform_quantiles[1]))
+                table_data[3].append(number_format_str.format(transform_quantiles[2]))
+                table_data[4].append(number_format_str.format(transformed_variable_series.mean()))
+                table_data[5].append(number_format_str.format(transform_quantiles[3]))
+                table_data[6].append(number_format_str.format(transform_quantiles[4]))
 
         table_header = [table_title]
 
@@ -433,8 +590,35 @@ class OLSModel(RatingModel, abc.ABC):
 
         return variable_summary
 
-    def get_explanatory_variable_summary(self):
+    def _get_vif_table(self):
+        """Get a table containing the variance inflation factor for each predictor variable.
+
+        :return:
         """
+
+        vif_data = [['']]
+
+        exog = self._model.exog
+
+        # for variable in self._explanatory_variables:
+        for exog_idx in range(1, exog.shape[1]):
+
+            vif = variance_inflation_factor(exog, exog_idx)
+
+            vif_data.append([self._float_string_format.format(vif)])
+
+        vif_table = SimpleTable(vif_data, headers=['VIF'])
+
+        return vif_table
+
+    def get_explanatory_variable_summary(self):
+        """Get a table of summary statistics for the explanatory variables. The summary statistics include:
+            Minimum
+            First quartile
+            Median (second quartile)
+            Mean
+            Third quartile
+            Maximum
 
         :return:
         """
@@ -446,6 +630,7 @@ class OLSModel(RatingModel, abc.ABC):
     def get_model_dataset(self):
         """Returns a pandas DataFrame containing the following columns:
 
+            Date and time of observation
             Observed response variable
             Observed explanatory variables
             Missing and excluded observation indicators
@@ -526,7 +711,13 @@ class OLSModel(RatingModel, abc.ABC):
         pass
 
     def get_model_report(self):
-        """
+        """Get a report for the model. The report contains
+            a summary of the model,
+            the parameter variance-covariance matrix,
+            model variable summary statistics,
+            the origin files for the data, and
+            a summary of the model dataset.
+
 
         :return:
         """
@@ -539,60 +730,85 @@ class OLSModel(RatingModel, abc.ABC):
                     data_origin.append([origin])
         origin_table = SimpleTable(data=data_origin, headers=['Data file location'])
 
-        model_equation = self._get_model_equation()
-
-        # get the model summary
-        model_report = self.get_model_summary()
-
-        # create a SimpleTable for the model dataset
-        model_dataset = self.get_model_dataset()
-        index_as_str = np.expand_dims(model_dataset.index.astype(str), 1)
-        observation_data = np.column_stack((index_as_str, model_dataset.as_matrix()))
-        observation_data_headers = ['DateTime']
-        observation_data_headers.extend(model_dataset.keys())
-        observation_table = SimpleTable(data=observation_data, headers=observation_data_headers)
+        observation_table = self._get_dataset_table()
 
         response_variable_summary = self.get_response_variable_summary()
         explanatory_variable_summary = self.get_explanatory_variable_summary()
 
-        model_report.tables.extend([model_equation,
-                                    origin_table,
+        # variance-covariance matrix
+        res = self._model.fit()
+        X = self._model.exog
+        x_prime_x_inverse = np.linalg.inv(np.matmul(X.transpose(), X))
+        var_cov_matrix = res.mse_resid * x_prime_x_inverse
+        var_cov_table = SimpleTable(data=var_cov_matrix,
+                                    headers=self._model.exog_names,
+                                    stubs=self._model.exog_names,
+                                    title='Variance-covariance matrix',
+                                    data_fmts=['%.5g'])
+
+        empty_table = SimpleTable(data=[''])
+
+        # get the model summary
+        model_report = self.get_model_summary()
+
+        model_report.tables.extend([empty_table,
+                                    var_cov_table,
                                     response_variable_summary,
                                     explanatory_variable_summary,
+                                    origin_table,
                                     observation_table])
 
         return model_report
 
     def get_model_summary(self):
-        """
+        """Get summary statistics for the model.
 
         :return:
         """
 
         summary = Summary()
+
+        # add the model equation with estimated parameters
+        model_equation = self._get_model_equation()
+        summary.tables.append(model_equation)
+
+        # add the parameter summary
+        params_summary = self._get_params_summary()
+        summary.tables.append(params_summary)
+
         res = self._model.fit()
 
-        string_format = '{:.5g}'
-
-        number_of_observations = ('Number of observations', [string_format.format(res.nobs)])
-        error_degrees_of_freedom = ('Error degrees of freedom', [string_format.format(res.df_resid)])
-        rmse = ('Root mean squared error', [string_format.format(np.sqrt(res.mse_resid))])
-        rsquared = ('R-squared', [string_format.format(res.rsquared)])
-        adjusted_rsquared = ('Adjusted R-squared', [string_format.format(res.rsquared_adj)])
-        fvalue = ('F-statistic vs. constant model', [string_format.format(res.fvalue)])
-        pvalue = ('p-value', [string_format.format(res.f_pvalue)])
-
-        gleft = [number_of_observations, error_degrees_of_freedom, rmse]
-        gright = [rsquared, adjusted_rsquared, fvalue, pvalue]
-
+        # add more summary statistics
+        gleft = self._get_left_summary_table(res)
+        gright = self._get_right_summary_table(res)
         summary.add_table_2cols(res, gleft=gleft, gright=gright)
 
-        summary.add_table_params(res, alpha=0.1)
+        # add extreme influence and outlier table
+        high_leverage = ('High leverage:', self._float_string_format.format(3*res.params.shape[0]/res.nobs))
+        extreme_outlier = ('Extreme outlier (Standardized residual):', self._float_string_format.format(3))
+        dfn = res.params.shape[0] + 1
+        dfd = res.nobs + res.params.shape[0]
+        high_influence_cooksd = ("High influence (Cook's D)",
+                                 self._float_string_format.format(stats.f.ppf(0.9, dfn=dfn, dfd=dfd)))
+        high_influence_dffits = ("High influence (DFFITS)",
+                                 self._float_string_format.format(2*np.sqrt(res.params.shape[0]/res.nobs)))
+        influence_and_outlier_table_data = [high_leverage,
+                                            extreme_outlier,
+                                            high_influence_cooksd,
+                                            high_influence_dffits]
+        influence_and_outlier_table = SimpleTable(data=influence_and_outlier_table_data)
+        summary.tables.append(influence_and_outlier_table)
 
         return summary
 
     def get_response_variable_summary(self):
-        """
+        """Get a table of summary statistics for the response variable. The summary statistics include:
+            Minimum
+            First quartile
+            Median (second quartile)
+            Mean
+            Third quartile
+            Maximum
 
         :return:
         """
@@ -602,7 +818,7 @@ class OLSModel(RatingModel, abc.ABC):
         return self._get_variable_summary((self._response_variable, ), table_title)
 
     def predict_response_variable(self, explanatory_data=None, bias_correction=False, prediction_interval=False):
-        """
+        """Predict the response of the model.
 
         :param explanatory_data:
         :param bias_correction:
@@ -720,6 +936,44 @@ class SimpleLinearRatingModel(OLSModel):
         exog = sm.add_constant(exog)
 
         return exog
+
+    def _get_left_summary_table(self, res):
+        """
+
+        :param res:
+        :return:
+        """
+
+        gleft = super()._get_left_summary_table(res)
+
+        removed_observation_index = self._model_dataset.index.isin(self._excluded_observations)
+        null_value_index = self._model_dataset.isnull().any(axis=1)
+        observation_index = ~(removed_observation_index | null_value_index)
+
+        explanatory_variable_transform = self._variable_transform[self._explanatory_variables[0]]
+        explanatory_transform_func = self._transform_functions[explanatory_variable_transform]
+        x = explanatory_transform_func(self._model_dataset.ix[observation_index, self._explanatory_variables[0]])
+
+        response_variable_transform = self._variable_transform[self._response_variable]
+        response_transform_func = self._transform_functions[response_variable_transform]
+        y = response_transform_func(self._model_dataset.ix[observation_index, self._response_variable])
+
+        linear_corr = ('Linear correlation coefficient', [self._float_string_format.format(stats.pearsonr(x, y)[0])])
+
+        gleft.append(linear_corr)
+
+        return gleft
+
+    def _get_right_summary_table(self, res):
+        """
+
+        :param res:
+        :return:
+        """
+
+        gright = super()._get_right_summary_table(res)
+
+        return gright
 
     def get_explanatory_variable(self):
         """Returns the name of the explanatory variable used in the SLR.
@@ -1062,6 +1316,7 @@ class CompoundRatingModel(RatingModel):
                                                response_variable=self.get_response_variable(),
                                                explanatory_variable=self.get_explanatory_variable())
             segment_model.exclude_observation(self.get_excluded_observations())
+            segment_model.transform_response_variable(self._variable_transform[self._response_variable])
 
             self._model.append(segment_model)
 
@@ -1154,15 +1409,69 @@ class CompoundRatingModel(RatingModel):
 
         return model_formula
 
+    def get_model_report(self):
+        """
+
+        :return:
+        """
+        model_report = self._model[0].get_model_report()
+
+        lower_bound = self._float_string_format.format(self._breakpoints[0])
+        upper_bound = self._float_string_format.format(self._breakpoints[1])
+        report_title = 'Segment model range: ' \
+                       + lower_bound \
+                       + ' <= ' + self._explanatory_variables[0] \
+                       + ' < ' + upper_bound
+        model_report.tables[0].title = report_title
+
+        number_of_segments = self.get_number_of_segments()
+
+        spacer_table = SimpleTable(data=['='*50])
+
+        for i in range(1, number_of_segments):
+            segment_model_report = self._model[i].get_model_report()
+            lower_bound = self._float_string_format.format(self._breakpoints[i])
+            upper_bound = self._float_string_format.format(self._breakpoints[i+1])
+            report_title = 'Segment model range: ' \
+                           + lower_bound \
+                           + ' <= ' + self._explanatory_variables[0] \
+                           + ' < ' + upper_bound
+            segment_model_report.tables[0].title = report_title
+            model_report.tables.extend([spacer_table] + segment_model_report.tables)
+
+        return model_report
+
     def get_model_summary(self):
         """
 
         :return:
         """
 
-        # TODO: Implement CompoundRatingModel.get_model_summary()
+        summary = self._model[0].get_model_summary()
+        lower_bound = self._float_string_format.format(self._breakpoints[0])
+        upper_bound = self._float_string_format.format(self._breakpoints[1])
+        summary_title = 'Segment model range: ' \
+                        + lower_bound \
+                        + ' <= ' + self._explanatory_variables[0] \
+                        + ' < ' + upper_bound
+        summary.tables[0].title = summary_title
 
-        pass
+        number_of_segments = self.get_number_of_segments()
+
+        spacer_table = SimpleTable(data=['='*50])
+
+        for i in range(1, number_of_segments):
+            segment_model_summary = self._model[i].get_model_summary()
+            lower_bound = self._float_string_format.format(self._breakpoints[i])
+            upper_bound = self._float_string_format.format(self._breakpoints[i+1])
+            summary_title = 'Segment model range: ' \
+                            + lower_bound \
+                            + ' <= ' + self._explanatory_variables[0] \
+                            + ' < ' + upper_bound
+            segment_model_summary.tables[0].title = summary_title
+            summary.tables.extend([spacer_table] + segment_model_summary.tables)
+
+        return summary
 
     def get_number_of_segments(self):
         """
@@ -1259,6 +1568,8 @@ class CompoundRatingModel(RatingModel):
         """
 
         self._check_transform(transform)
+
+        self._variable_transform[self._response_variable] = transform
 
         for segment_model in self._model:
             segment_model.transform_response_variable(transform)
