@@ -1301,7 +1301,9 @@ class CompoundRatingModel(RatingModel):
             lower_bound = self._breakpoints[i]
             upper_bound = self._breakpoints[i+1]
 
-            segment_range_index = (lower_bound <= self._model_dataset.ix[:, self._explanatory_variables[0]]) & \
+            # 12/2/2016
+            # switched around compare statement. new version of pandas doesn't like the other way for some reason - MMD
+            segment_range_index = (self._model_dataset.ix[:, self._explanatory_variables[0]] >= lower_bound) & \
                                   (self._model_dataset.ix[:, self._explanatory_variables[0]] < upper_bound)
 
             origin_data = []
