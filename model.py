@@ -6,6 +6,8 @@ from numpy import log, log10, power
 
 from scipy import stats
 
+import matplotlib.pyplot as plt
+
 import pandas as pd
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
@@ -251,6 +253,17 @@ class RatingModel(abc.ABC):
 
         return self._response_variable
 
+    def get_variable_transform(self, variable):
+        """Return variable transformation.
+
+        :param variable:
+        :return:
+        """
+
+        self._check_variable_names([variable])
+
+        return self._variable_transform[variable]
+
     def get_variable_names(self):
         """Return a tuple containing the variable names within the model."""
 
@@ -270,6 +283,14 @@ class RatingModel(abc.ABC):
         self._excluded_observations = self._excluded_observations[~restored_index]
 
         self._create_model()
+
+    @abc.abstractmethod
+    def plot(self, **kwargs):
+        """
+
+        :return:
+        """
+        pass
 
     def set_response_variable(self, response_variable):
         """Set the response variable of the model.
@@ -611,6 +632,123 @@ class OLSModel(RatingModel, abc.ABC):
 
         return vif_table
 
+    def _plot_resid_probability(self, ax):
+        """Residual probability plot
+
+        :param ax:
+        :return:
+        """
+
+        res_normal_quantile = self._calc_res_normal_quantile()
+
+        res = self._model.fit()
+
+        ax.plot(res_normal_quantile, res.resid, '.')
+
+        x_lim = ax.get_xlim()
+        y_lim = ax.get_ylim()
+
+        low_value = np.min([x_lim[0], y_lim[0]])
+        high_value = np.max([x_lim[1], y_lim[1]])
+
+        ax.plot([low_value, high_value], [low_value, high_value], color='k', ls=':')
+
+        ax.set_xlim(x_lim)
+        ax.set_ylim(y_lim)
+
+        ax.set_title('Probability plot')
+
+        ax.set_xlabel('Normal quantile')
+        ax.set_ylabel('Residual')
+
+    def _plot_resid_vs_fitted(self, ax):
+        """Residuals plotted against fitted response values
+
+        :param ax:
+        :return:
+        """
+
+        res = self._model.fit()
+
+        ax.plot(res.fittedvalues, res.resid, '.')
+        ax.set_xlabel('Fitted ' + self._model.endog_names)
+        ax.set_ylabel('Raw residual')
+        plt.axhline(color='k', axes=ax)
+
+    def _plot_resid_vs_time(self, ax):
+        """Residuals plotted against time
+
+        :param ax:
+        :return:
+        """
+
+        res = self._model.fit()
+
+        ax.plot(res.resid.index, res.resid, '.')
+        ax.set_xlabel('Time')
+        ax.set_ylabel('Residual')
+
+        plt.axhline(color='black')
+
+    def _plot_stand_ser_corr_coff(self, ax):
+        """Standardized serial correlation coefficient plot
+
+        :param ax:
+        :return:
+        """
+
+        # get the raw residuals
+        res = self._model.fit()
+        resid = np.array(res.resid)
+        resid = np.expand_dims(resid, axis=0)
+
+        # expand the residuals and time values into matrices
+        resid_matrix = np.tile(res.resid, (int(res.nobs), 1))
+        time_matrix = np.tile(res.resid.index, (int(res.nobs), 1))
+        time_array = np.expand_dims(np.array(res.resid.index), axis=1)
+
+        # calculate the time difference
+        time_diff = (time_matrix - time_array).astype(np.float)
+
+        # find the times that are less than or equal to zero and set them to nan
+        neg_time_diff_index = time_diff <= 0
+        time_diff[neg_time_diff_index] = np.nan
+        resid_matrix[neg_time_diff_index] = np.nan
+
+        # get the mean and variance of the residuals
+        resid_mean = resid.mean()
+        resid_var = resid.var()
+
+        # calculate the standardized serial correlation coefficients
+        standardized_serial_correlation = (resid - resid_mean).transpose() * (resid_matrix - resid_mean) / resid_var
+
+        # convert nanoseconds to days
+        ns_to_d = (1 / 1e9) * (1 / 60.) * (1 / 60.) * (1 / 24.)
+        time_diff = ns_to_d * time_diff
+
+        # remove and flatten the results
+        nan_index = neg_time_diff_index.flatten()
+        standardized_serial_correlation = standardized_serial_correlation.flatten()[~nan_index]
+        time_diff = time_diff.flatten()[~nan_index]
+
+        # sort the values on time_diff
+        index_array = np.argsort(time_diff)
+        time_diff = time_diff[index_array]
+        standardized_serial_correlation = standardized_serial_correlation[index_array]
+
+        # fit a lowess line to the data
+        lowess_fit = sm.nonparametric.lowess(standardized_serial_correlation, time_diff, frac=0.65,
+                                             is_sorted=True, return_sorted=False)
+
+        # plot the data
+        ax.plot(time_diff, standardized_serial_correlation, '.')
+        ax.plot(time_diff, lowess_fit, color='black', ls='-', linewidth=0.5)
+
+        ax.set_xlabel('Difference in time, in days')
+        ax.set_ylabel('Standardized serial correlation coefficient')
+
+        plt.axhline(color='black', ls='--')
+
     def get_explanatory_variable_summary(self):
         """Get a table of summary statistics for the explanatory variables. The summary statistics include:
             Minimum
@@ -817,6 +955,30 @@ class OLSModel(RatingModel, abc.ABC):
 
         return self._get_variable_summary((self._response_variable, ), table_title)
 
+    def plot(self, plot_type, ax):
+        """
+
+        :param plot_type:
+        :param ax:
+        :return:
+        """
+
+        if plot_type is 'resid_vs_fitted':
+
+            self._plot_resid_vs_fitted(ax)
+
+        if plot_type is 'resid_vs_time':
+
+            self._plot_resid_vs_time(ax)
+
+        elif plot_type is 'resid_probability':
+
+            self._plot_resid_probability(ax)
+
+        elif plot_type is 'serial_correlation':
+
+            self._plot_stand_ser_corr_coff(ax)
+
     def predict_response_variable(self, explanatory_data=None, bias_correction=False, prediction_interval=False):
         """Predict the response of the model.
 
@@ -964,6 +1126,38 @@ class SimpleLinearRatingModel(OLSModel):
 
         return gleft
 
+    def _get_model_confidence_mean(self, x_fit, alpha=0.1):
+        """
+
+        :param alpha:
+        :param x_fit:
+        :return:
+        """
+
+        res = self._model.fit()
+
+        exog_fit = sm.add_constant(x_fit)
+
+        y_fit = self._model.predict(res.params, exog=exog_fit)
+
+        u_ci = np.empty(y_fit.shape)
+        l_ci = np.empty(y_fit.shape)
+
+        x_prime_x_inverse = np.linalg.inv(np.dot(self._model.exog.transpose(), self._model.exog))
+
+        t_ppf_value = stats.t.ppf(1-alpha/2, self._model.df_resid)
+
+        for i in range(len(u_ci)):
+
+            leverage = np.dot(exog_fit[i, :], np.dot(x_prime_x_inverse, exog_fit[i, :]))
+
+            interval_distance = t_ppf_value * np.sqrt(res.mse_resid * leverage)
+
+            u_ci[i] = y_fit[i] + interval_distance
+            l_ci[i] = y_fit[i] - interval_distance
+
+        return y_fit, l_ci, u_ci
+
     def _get_right_summary_table(self, res):
         """
 
@@ -974,6 +1168,35 @@ class SimpleLinearRatingModel(OLSModel):
         gright = super()._get_right_summary_table(res)
 
         return gright
+
+    @staticmethod
+    def _plot_scatter_fit(ax, x_obs, y_obs, x_fit, y_fit, l_ci, u_ci, x_label, y_label):
+        """Scatter plot with fit line and confidence interval
+
+        :param ax:
+        :param x_obs:
+        :param y_obs:
+        :param x_fit:
+        :param y_fit:
+        :param l_ci:
+        :param u_ci:
+        :param x_label:
+        :param y_label:
+        :return:
+        """
+
+        # ax = plt.axes()
+
+        ax.plot(x_obs, y_obs, ls='None', marker='.', label='Observations')
+        ax.plot(x_fit, y_fit, ls='-', color='black', label='Fit line')
+        ax.plot(x_fit, l_ci, ls=':', color='black', label='Confidence interval')
+        ax.plot(x_fit, u_ci, ls=':', color='black')
+
+        ax.set_xlabel(x_label)
+        ax.set_ylabel(y_label)
+
+        ax.legend(loc='best')
+        return ax
 
     def get_explanatory_variable(self):
         """Returns the name of the explanatory variable used in the SLR.
@@ -1006,6 +1229,78 @@ class SimpleLinearRatingModel(OLSModel):
             model_formula = None
 
         return model_formula
+
+    def plot(self, plot_type='model_scatter', ax=None):
+        """
+
+        :param plot_type:
+        :param ax:
+        :return:
+        """
+
+        # model observations
+        x_obs = self._model.exog[:, 1]
+        y_obs = self._model.endog
+
+        if not ax:
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
+
+        # scatter plot as used in the model
+        if plot_type is 'model_scatter':
+
+            x_fit = np.linspace(np.min(x_obs), np.max(x_obs))
+
+            y_fit, l_ci, u_ci = self._get_model_confidence_mean(x_fit)
+
+            x_label = self._model.exog_names[1]
+            y_label = self._model.endog_names
+
+            self._plot_scatter_fit(ax, x_obs, y_obs, x_fit, y_fit, l_ci, u_ci, x_label, y_label)
+
+        # scatter plot as non-transformed values
+        elif plot_type is 'variable_scatter':
+
+            explanatory_variable_transform = self.get_variable_transform(self._explanatory_variables[0])
+            response_variable_transform = self.get_variable_transform(self._response_variable)
+
+            # if neither variable is transformed, return a scatter plot
+            if not response_variable_transform and not explanatory_variable_transform:
+                self.plot(plot_type='model_scatter', ax=ax)
+
+            else:
+
+                # get non-transformed values to predict response values
+                explan_inverse_func = self._inverse_transform_functions[explanatory_variable_transform]
+                explanatory_obs = explan_inverse_func(x_obs)
+                explanatory_fit = np.linspace(np.min(explanatory_obs), np.max(explanatory_obs))
+
+                # get response values in transformed space
+                explan_transform_func = self._transform_functions[explanatory_variable_transform]
+                x_fit = explan_transform_func(explanatory_fit)
+                y_fit, l_ci, u_ci = self._get_model_confidence_mean(x_fit)
+
+                # get response values in non-transformed space
+                response_inverse_func = self._inverse_transform_functions[response_variable_transform]
+                response_fit = response_inverse_func(y_fit)
+                response_fit_l_ci = response_inverse_func(l_ci)
+                response_fit_u_ci = response_inverse_func(u_ci)
+
+                # get the response observations in non-transformed space
+                response_obs = response_inverse_func(y_obs)
+
+                self._plot_scatter_fit(ax,
+                                       explanatory_obs, response_obs,
+                                       explanatory_fit, response_fit,
+                                       response_fit_l_ci, response_fit_u_ci,
+                                       self._explanatory_variables[0], self._response_variable)
+
+        # call super class plotting function for other plot types
+        else:
+
+            super().plot(plot_type, ax)
+
+        return ax
 
     def set_explanatory_variable(self, variable):
         """
