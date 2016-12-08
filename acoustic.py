@@ -5,7 +5,10 @@ import os
 import re
 
 import pandas as pd
+import matplotlib.pyplot as plt
 import numpy as np
+
+from datetime import timedelta
 
 from data import SurrogateData
 
@@ -1176,3 +1179,81 @@ class ADVMSedimentAcousticData(SurrogateData):
         acoustic_data = self._update_acoustic_data()
 
         self._data = acoustic_data
+
+
+class AcousticProfilePlotter:
+    """
+
+    """
+
+    _line_styles = ['-', '--', '-.', ':']
+    _colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
+
+    def __init__(self, constituent_data_manager):
+        """
+
+        :param constituent_data_manager:
+        """
+
+        self._constituent_data_manager = constituent_data_manager
+
+    def plot_backscatter_profiles(self, acoustic_parameter='MeanSCB', constituent_observation_times=None):
+        """
+
+        :param acoustic_parameter:
+        :param constituent_observation_times:
+        :return:
+        """
+
+        data_index = self._constituent_data_manager.get_data().index
+
+        if constituent_observation_times is None:
+            constituent_observation_times = data_index
+
+        observation_index = data_index.isin(constituent_observation_times)
+
+        observation_times = data_index[observation_index]
+
+        advm_data = self._constituent_data_manager.get_surrogate_data_manager()
+
+        cell_range = advm_data.get_cell_range()
+        measured_backscatter = advm_data.get_mb()
+        water_corrected_backscatter = advm_data.get_wcb()
+        sediment_corrected_backscatter = advm_data.get_scb()
+
+        avg_window = self._constituent_data_manager.get_surrogate_avg_window(acoustic_parameter)
+        avg_window = timedelta(minutes=avg_window)
+
+        fig, (scb_ax, wcb_ax, mb_ax) = plt.subplots(nrows=3, sharex=True)
+
+        for obs_time in observation_times:
+
+            beginning_time = obs_time - avg_window
+            ending_time = obs_time + avg_window
+
+            time_window = (beginning_time < cell_range.index) & (cell_range.index <= ending_time)
+
+            obs_cell_range = cell_range.ix[time_window, :].as_matrix()
+            obs_mb = measured_backscatter.ix[time_window, :].as_matrix()
+            obs_wcb = water_corrected_backscatter.ix[time_window, :].as_matrix()
+            obs_scb = sediment_corrected_backscatter.ix[time_window, :].as_matrix()
+
+            obs_number = np.nonzero(obs_time==data_index)[0]
+
+            color_index = int(obs_number % len(self._colors))
+            obs_color = self._colors[color_index]
+
+            line_style_index = int(obs_number//len(self._line_styles) % len(self._line_styles))
+            obs_line_style = self._line_styles[line_style_index]
+
+            mb_ax.plot(obs_cell_range.transpose(), obs_mb.transpose(), ls=obs_line_style, color=obs_color, marker='.')
+            mb_ax.set_xlabel('Cell range, in meters')
+            mb_ax.set_ylabel('Measured backscatter,\nin decibels')
+
+            wcb_ax.plot(obs_cell_range.transpose(), obs_wcb.transpose(), ls=obs_line_style, color=obs_color, marker='.')
+            wcb_ax.set_ylabel('Water corrected\nbackscatter, in decibels')
+
+            scb_ax.plot(obs_cell_range.transpose(), obs_scb.transpose(), ls=obs_line_style, color=obs_color, marker='.')
+            scb_ax.set_ylabel('Sediment corrected\nbackscatter, in decibels')
+
+        return fig

@@ -611,6 +611,24 @@ class OLSModel(RatingModel, abc.ABC):
 
         return variable_summary
 
+    def _get_variance_covariance_table(self):
+        """
+
+        :return:
+        """
+
+        # variance-covariance matrix
+        res = self._model.fit()
+        X = self._model.exog
+        x_prime_x_inverse = np.linalg.inv(np.matmul(X.transpose(), X))
+        var_cov_matrix = res.mse_resid * x_prime_x_inverse
+        var_cov_table = SimpleTable(data=var_cov_matrix,
+                                    headers=self._model.exog_names,
+                                    stubs=self._model.exog_names,
+                                    title='Variance-covariance matrix')
+
+        return var_cov_table
+
     def _get_vif_table(self):
         """Get a table containing the variance inflation factor for each predictor variable.
 
@@ -673,7 +691,9 @@ class OLSModel(RatingModel, abc.ABC):
         ax.plot(res.fittedvalues, res.resid, '.')
         ax.set_xlabel('Fitted ' + self._model.endog_names)
         ax.set_ylabel('Raw residual')
-        plt.axhline(color='k', axes=ax)
+        plt.sca(ax)
+        # plt.axhline(color='k', axes=ax)
+        plt.axhline(color='k')
 
     def _plot_resid_vs_time(self, ax):
         """Residuals plotted against time
@@ -688,6 +708,7 @@ class OLSModel(RatingModel, abc.ABC):
         ax.set_xlabel('Time')
         ax.set_ylabel('Residual')
 
+        plt.sca(ax)
         plt.axhline(color='black')
 
     def _plot_stand_ser_corr_coff(self, ax):
@@ -747,6 +768,7 @@ class OLSModel(RatingModel, abc.ABC):
         ax.set_xlabel('Difference in time, in days')
         ax.set_ylabel('Standardized serial correlation coefficient')
 
+        plt.sca(ax)
         plt.axhline(color='black', ls='--')
 
     def get_explanatory_variable_summary(self):
@@ -873,18 +895,9 @@ class OLSModel(RatingModel, abc.ABC):
         response_variable_summary = self.get_response_variable_summary()
         explanatory_variable_summary = self.get_explanatory_variable_summary()
 
-        # variance-covariance matrix
-        res = self._model.fit()
-        X = self._model.exog
-        x_prime_x_inverse = np.linalg.inv(np.matmul(X.transpose(), X))
-        var_cov_matrix = res.mse_resid * x_prime_x_inverse
-        var_cov_table = SimpleTable(data=var_cov_matrix,
-                                    headers=self._model.exog_names,
-                                    stubs=self._model.exog_names,
-                                    title='Variance-covariance matrix',
-                                    data_fmts=['%.5g'])
-
         empty_table = SimpleTable(data=[''])
+
+        var_cov_table = self._get_variance_covariance_table()
 
         # get the model summary
         model_report = self.get_model_summary()
@@ -1242,7 +1255,7 @@ class SimpleLinearRatingModel(OLSModel):
         x_obs = self._model.exog[:, 1]
         y_obs = self._model.endog
 
-        if not ax:
+        if ax is None:
             fig = plt.figure()
             ax = fig.add_subplot(111)
 
