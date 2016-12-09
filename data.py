@@ -20,19 +20,11 @@ ConcurrentObservationError: An error if concurrent observations exist for a sing
 
 Classes:
 
-ADVMParam: Base class for ADVM parameter classes.
-
-ADVMProcParam: Stores ADVM Processing parameters.
-
-ADVMConfigParam: Stores ADVM Configuration parameters.
-
 DataManager: Base class for data subclasses.
 
 ConstituentData: Base class to manage constituent data.
 
 SurrogateData: Data manager class for surrogate data.
-
-ADVMSedimentAcousticData: Data manager class for acoustic data.
 
 """
 

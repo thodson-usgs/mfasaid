@@ -225,6 +225,14 @@ class RatingModel(abc.ABC):
 
         self._create_model()
 
+    def get_data_manager(self):
+        """Returns the model data manager
+
+        :return:
+        """
+
+        return self._data_manager
+
     def get_excluded_observations(self):
         """Returns a time series of observations that have been excluded from the model.
 
@@ -995,9 +1003,15 @@ class OLSModel(RatingModel, abc.ABC):
     def predict_response_variable(self, explanatory_data=None, bias_correction=False, prediction_interval=False):
         """Predict the response of the model.
 
-        :param explanatory_data:
-        :param bias_correction:
-        :param prediction_interval:
+        If prediction_interval=True, then a DataFrame with the mean response and upper and lower 90% prediction
+        interval is returned.
+
+        :param explanatory_data: Data manager containing explanatory variable data
+        :type explanatory_data: data.DataManager
+        :param bias_correction: Indicate whether or not to use bias correction
+        :type bias_correction: bool
+        :param prediction_interval: Indicate whether or not to return a 90% prediction interval
+        :type prediction_interval: bool
         :return:
         """
 
