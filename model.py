@@ -18,6 +18,7 @@ from statsmodels.sandbox.regression.predstd import wls_prediction_std
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 
 import data
+import stats as saidstats
 
 
 class ModelException(Exception):
@@ -95,48 +96,6 @@ class RatingModel(abc.ABC):
 
         # initialize the model attribute
         self._model = None
-
-    @staticmethod
-    def _calc_plotting_position(x, a=0.5):
-        """
-
-        :param data:
-        :param a:
-        :return:
-        """
-
-        x = np.asarray(x)
-
-        Nx = x.shape[0]
-
-        sorted_index = np.argsort(x)
-
-        rank = np.zeros(Nx, int)
-        rank[sorted_index] = np.arange(Nx) + 1
-
-        pp = (rank - a) / (Nx + 1 - 2 * a)
-
-        return pp
-
-    @staticmethod
-    def _calc_quantile(x, q):
-        """
-
-        :param x:
-        :param q:
-        :return:
-        """
-
-        pp = RatingModel._calc_plotting_position(x)
-
-        sorted_index = np.argsort(x)
-
-        xp = x[sorted_index]
-        pp = pp[sorted_index]
-
-        quantile = np.interp(q, pp, xp)
-
-        return quantile
 
     @classmethod
     def _check_transform(cls, transform):
@@ -364,7 +323,7 @@ class OLSModel(RatingModel, abc.ABC):
         """
 
         res = self._model.fit()
-        plotting_position = self._calc_plotting_position(res.resid)
+        plotting_position = saidstats.calc_plotting_position(res.resid)
         loc, scale = stats.norm.fit(res.resid)
         dist = stats.norm(loc, scale)
         normal_quantile = dist.ppf(plotting_position)
@@ -581,7 +540,7 @@ class OLSModel(RatingModel, abc.ABC):
 
             variable_series = self._model_dataset.ix[~excluded_observations, variable]
 
-            quantiles = self._calc_quantile(variable_series, q)
+            quantiles = saidstats.calc_quantile(variable_series, q)
 
             table_data[0].append(variable)
             table_data[1].append(number_format_str.format(quantiles[0]))
@@ -601,7 +560,7 @@ class OLSModel(RatingModel, abc.ABC):
 
                 transformed_variable_series = transform_function(variable_series)
 
-                transform_quantiles = self._calc_quantile(transformed_variable_series, q)
+                transform_quantiles = saidstats.calc_quantile(transformed_variable_series, q)
 
                 table_data[0].append(variable_transform_name)
                 table_data[1].append(number_format_str.format(transform_quantiles[0]))
@@ -717,7 +676,7 @@ class OLSModel(RatingModel, abc.ABC):
         ax.set_ylabel('Residual')
 
         plt.sca(ax)
-        plt.axhline(color='black')
+        plt.axhline(color='k')
 
     def _plot_stand_ser_corr_coff(self, ax):
         """Standardized serial correlation coefficient plot

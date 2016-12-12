@@ -4,6 +4,7 @@ import numpy as np
 from datetime import timedelta
 
 import data
+import stats
 
 
 class AcousticProfilePlotCreator:
@@ -96,7 +97,8 @@ class SurrogateDataPlotCreator:
     def plot_scatter(self, constituent_variable, surrogate_variable, x_log=False, y_log=False, ax=None):
 
         if ax is None:
-            ax = plt.axes()
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
 
         constituent_series = self._constituent_data_manager.get_variable(constituent_variable)
         surrogate_series = self._constituent_data_manager.get_variable(surrogate_variable)
@@ -115,7 +117,8 @@ class SurrogateDataPlotCreator:
     def plot_time_series(self, constituent_variable, surrogate_variable, left_log=False, right_log=False, left_ax=None):
 
         if left_ax is None:
-            left_ax = plt.axes()
+            fig = plt.figure()
+            left_ax = fig.add_subplot(111)
 
         right_ax = plt.twinx(left_ax)
 
@@ -151,11 +154,13 @@ class SurrogateModelPlotCreator:
 
         self._surrogate_rating_model = surrogate_rating_model
 
-        # determine if the rating model has a constituent data manager
-        model_data_manager = surrogate_rating_model.get_data_manager()
+        # determine if the rating model is a constituent-surrogate model
+        self._constituent_data_manager = model_data_manager = surrogate_rating_model.get_data_manager()
 
-        if not isinstance(model_data_manager, data.ConstituentData):
-            raise TypeError("Rating model must have a constituent data manager type.")
+        self._surrogate_data_manager = model_data_manager.get_surrogate_data_manager()
+
+        if not isinstance(self._surrogate_data_manager, data.SurrogateData):
+            raise TypeError("Rating model data manager must have an associated surrogate data manager.")
 
     def _plot_constituent_time_series(self, ax):
         """
@@ -195,11 +200,8 @@ class SurrogateModelPlotCreator:
         """
 
         # get predicted data to plot
-        constituent_data_manager = self._surrogate_rating_model.get_data_manager()
-        surrogate_data_manager = constituent_data_manager.get_surrogate_data_manager()
-        predicted_data = self._surrogate_rating_model.predict_response_variable(explanatory_data=surrogate_data_manager,
-                                                                                bias_correction=True,
-                                                                                prediction_interval=True)
+        predicted_data = self._surrogate_rating_model.predict_response_variable(
+            explanatory_data=self._surrogate_data_manager, bias_correction=True, prediction_interval=True)
 
         # mean response
         response_variable_name = self._surrogate_rating_model.get_response_variable()
@@ -225,7 +227,8 @@ class SurrogateModelPlotCreator:
         """
         # create an axis if one isn't passed
         if ax is None:
-            ax = plt.axes()
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
 
         # plot the predicted time series
         self._plot_predicted_time_series(ax)
@@ -238,6 +241,55 @@ class SurrogateModelPlotCreator:
             ax.set_yscale('log')
 
         ax.set_ylabel(response_variable_name)
+        ax.legend(loc='best', numpoints=1)
+
+        return ax
+
+    def plot_observation_quantile(self, surrogate_variable_name, ax=None):
+        """
+
+        :param surrogate_variable_name:
+        :param ax:
+        :return:
+        """
+
+        if ax is None:
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
+
+        # get the surrogate variable plotting positions
+        surrogate_variable = self._surrogate_data_manager.get_variable(surrogate_variable_name)
+        surrogate_variable = np.squeeze(surrogate_variable)
+        surrogate_pp = stats.calc_plotting_position(surrogate_variable)
+
+        # plot the surrogate plotting positions
+        ax.plot(surrogate_variable, surrogate_pp, marker='.', markersize=5,
+                linestyle='None', label='Surrogate observation')
+
+        # find the information to plot model observations
+        # dates included in the model
+        model_dataset = self._surrogate_rating_model.get_model_dataset()
+        missing_or_excluded_index = model_dataset['Missing'] | model_dataset['Excluded']
+        included_dates = model_dataset.index[~missing_or_excluded_index]
+
+        # find the surrogate values (and plotting position) closest-in-time to model observations
+        model_obs_surrogate_value = np.empty(included_dates.shape)
+        model_obs_pp = np.empty(included_dates.shape)
+        for i in range(len(included_dates)):
+            abs_time_diff = np.abs(included_dates[i] - surrogate_variable.index)
+            min_abs_time_diff = np.min(abs_time_diff)
+            closest_obs_index = abs_time_diff == min_abs_time_diff
+            model_obs_surrogate_value[i] = surrogate_variable.ix[closest_obs_index]
+            model_obs_pp[i] = surrogate_pp[closest_obs_index]
+
+        # plot model observation occurrences
+        ax.plot(model_obs_surrogate_value, model_obs_pp,
+                marker='o', markerfacecolor='yellow', markeredgecolor='black',
+                linestyle='None', label='Model observation')
+
+        ax.set_xlabel(surrogate_variable_name)
+        ax.set_ylabel('Cumulative frequency')
+
         ax.legend(loc='best', numpoints=1)
 
         return ax
