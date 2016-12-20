@@ -935,6 +935,7 @@ class OLSModel(RatingModel, abc.ABC):
 
         return self._get_variable_summary((self._response_variable, ), table_title)
 
+    @abc.abstractmethod
     def plot(self, plot_type, ax):
         """
 
@@ -1333,6 +1334,64 @@ class MultipleLinearRatingModel(OLSModel):
 
         # self.update_model()
 
+    def _estimate_explanatory_variable(self, explanatory_variable):
+        """
+
+        :param explanatory_variable:
+        :return:
+        """
+
+        assert explanatory_variable in self._model.exog_names
+
+        model_exog = self._model.exog
+
+        p = model_exog.shape[1]
+
+        estimate_exog_columns = np.zeros((p,)).astype(bool)
+
+        for j in range(p):
+
+            if self._model.exog_names[j] == explanatory_variable:
+                continue
+            else:
+                estimate_exog_columns[j] = True
+
+        X = model_exog[:, estimate_exog_columns]
+        Y = model_exog[:, ~estimate_exog_columns]
+
+        Y_estimate = saidstats.ols_response_estimate(X, Y)
+
+        return Y_estimate
+
+    def _estimate_response_wo_explanatory_variable(self, explanatory_variable):
+        """
+
+        :param explanatory_variable:
+        :return:
+        """
+
+        assert explanatory_variable in self._model.exog_names
+
+        model_exog = self._model.exog
+
+        p = model_exog.shape[1]
+
+        estimate_exog_columns = np.zeros((p,)).astype(bool)
+
+        for j in range(p):
+
+            if self._model.exog_names[j] == explanatory_variable:
+                continue
+            else:
+                estimate_exog_columns[j] = True
+
+        X = model_exog[:, estimate_exog_columns]
+        Y = self._model.endog
+
+        response_estimate = saidstats.ols_response_estimate(X, Y)
+
+        return response_estimate
+
     def _get_exogenous_matrix(self, exogenous_df):
         """
 
@@ -1387,6 +1446,49 @@ class MultipleLinearRatingModel(OLSModel):
             model_formula = None
 
         return model_formula
+
+    def plot(self, plot_type='model_scatter', ax=None):
+        """
+
+        :param plot_type:
+        :param ax:
+        :return:
+        """
+
+        if plot_type == 'scatter':
+            number_of_explanatory_variables = self._model.exog.shape[1] - 1
+
+            if ax is None:
+                ax = []
+                for i in range(number_of_explanatory_variables):
+                    fig = plt.figure()
+                    ax.append(fig.add_subplot(111))
+
+            for i in range(number_of_explanatory_variables):
+
+                explanatory_variable = self._model.exog_names[i+1]
+                estimated_explanatory = self._estimate_explanatory_variable(explanatory_variable)
+                estimated_response = self._estimate_response_wo_explanatory_variable(explanatory_variable)
+                adjusted_explanatory = self._model.exog[:, i+1] - estimated_explanatory
+                adjusted_response = self._model.endog - estimated_response
+                ax[i].plot(adjusted_explanatory, adjusted_response, '.')
+
+                exog = sm.add_constant(adjusted_explanatory)
+                endog = adjusted_response
+                fit_line_response = saidstats.ols_response_estimate(exog, endog)
+                fit_line_x = [np.min(adjusted_explanatory), np.max(adjusted_explanatory)]
+                fit_line_y = [np.min(fit_line_response), np.max(fit_line_response)]
+                ax[i].plot(fit_line_x, fit_line_y, linestyle=':', color='black')
+
+                ax[i].set_xlabel(explanatory_variable)
+                ax[i].set_ylabel(self._model.endog_names)
+                ax[i].set_title('Partial residual plot for ' + explanatory_variable)
+        else:
+            if ax is None:
+                ax = plt.axes()
+            super().plot(plot_type, ax)
+
+        return ax
 
     def set_explanatory_variables(self, variables):
         """

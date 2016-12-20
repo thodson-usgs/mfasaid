@@ -83,7 +83,7 @@ class AcousticProfilePlotCreator:
         return fig
 
 
-class SurrogateDataPlotCreator:
+class ConstituentDataSetPlotCreator:
 
     def __init__(self, constituent_data_manager):
         """
@@ -259,6 +259,7 @@ class SurrogateModelPlotCreator:
 
         # get the surrogate variable plotting positions
         surrogate_variable = self._surrogate_data_manager.get_variable(surrogate_variable_name)
+        surrogate_variable = surrogate_variable.dropna()
         surrogate_variable = np.squeeze(surrogate_variable)
         surrogate_pp = stats.calc_plotting_position(surrogate_variable)
 
@@ -276,11 +277,17 @@ class SurrogateModelPlotCreator:
         model_obs_surrogate_value = np.empty(included_dates.shape)
         model_obs_pp = np.empty(included_dates.shape)
         for i in range(len(included_dates)):
+
+            # find the minimum absolute time difference
             abs_time_diff = np.abs(included_dates[i] - surrogate_variable.index)
             min_abs_time_diff = np.min(abs_time_diff)
+
+            # get the closest observation index
             closest_obs_index = abs_time_diff == min_abs_time_diff
-            model_obs_surrogate_value[i] = surrogate_variable.ix[closest_obs_index]
-            model_obs_pp[i] = surrogate_pp[closest_obs_index]
+
+            # set the surrogate value and plotting position to the earliest occurrence
+            model_obs_surrogate_value[i] = surrogate_variable.ix[closest_obs_index][0]
+            model_obs_pp[i] = surrogate_pp[closest_obs_index][0]
 
         # plot model observation occurrences
         ax.plot(model_obs_surrogate_value, model_obs_pp,

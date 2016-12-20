@@ -41,3 +41,33 @@ def calc_quantile(x, q):
     quantile = np.interp(q, pp, xp)
 
     return quantile
+
+
+def ols_parameter_estimate(exog, endog):
+    """
+
+    :param exog:
+    :param endog:
+    :return:
+    """
+
+    parameter_estimate = np.dot(np.dot(np.linalg.inv(np.dot(exog.transpose(), exog)), exog.transpose()), endog)
+
+    return parameter_estimate
+
+
+def ols_response_estimate(exog, endog):
+    """
+
+    :param exog:
+    :param endog:
+    :return:
+    """
+
+    parameter_estimate = ols_parameter_estimate(exog, endog)
+
+    response_estimate = np.dot(exog, parameter_estimate)
+
+    response_estimate = np.squeeze(response_estimate)
+
+    return response_estimate

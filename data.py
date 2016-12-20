@@ -273,7 +273,9 @@ class DataManager:
 
         self._check_variable_name(variable_name)
 
-        return pd.DataFrame(self._data.ix[:, variable_name]).dropna()
+        # return pd.DataFrame(self._data.ix[:, variable_name]).dropna()
+
+        return pd.DataFrame(self._data.ix[:, variable_name])
 
     def get_variable_names(self):
         """Return a list of variable names.
@@ -417,7 +419,7 @@ class ConstituentData(DataManager):
         return self._surrogate_data
 
     def set_surrogate_avg_window(self, surrogate_variable_name, avg_window):
-        """
+        """Set the surrogate variable averaging window.
 
         :param surrogate_variable_name:
         :param avg_window:
