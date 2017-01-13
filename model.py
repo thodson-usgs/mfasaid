@@ -170,6 +170,39 @@ class RatingModel(abc.ABC):
 
         return cls._transform_variable_names[transform].replace('x', variable)
 
+    def _plot_predicted_vs_observed(self, ax):
+        """
+
+        :return:
+        """
+
+        res = self._model.fit()
+        model_observation_index = res.resid.index
+
+        observed_response = self._data_manager.get_variable(self._response_variable)
+        observed_response = observed_response.ix[model_observation_index]
+        predicted_response = self.predict_response_variable(bias_correction=True)
+
+        ax.plot(observed_response, predicted_response[self._response_variable], '.', label='Observation')
+
+        response_variable_transform = self._variable_transform[self._response_variable]
+
+        # if (response_variable_transform == 'log') or (response_variable_transform == 'log10'):
+        #     ax.set_xscale('log')
+        #     ax.set_yscale('log')
+
+        x_lim = ax.get_xlim()
+
+        ax.plot(x_lim, x_lim, 'k:', label='1:1 line')
+
+        ax.legend(loc='best', numpoints=1)
+
+        x_label = 'Observed ' + self._response_variable
+        y_label = 'Predicted ' + self._response_variable
+
+        ax.set_xlabel(x_label)
+        ax.set_ylabel(y_label)
+
     def exclude_observation(self, observation_time):
         """Exclude observation from the model.
 
@@ -252,12 +285,14 @@ class RatingModel(abc.ABC):
         self._create_model()
 
     @abc.abstractmethod
-    def plot(self, **kwargs):
+    def plot(self, plot_type, ax):
         """
 
         :return:
         """
-        pass
+
+        if plot_type == 'pred_vs_obs':
+            self._plot_predicted_vs_observed(ax)
 
     def set_response_variable(self, response_variable):
         """Set the response variable of the model.
@@ -286,7 +321,7 @@ class RatingModel(abc.ABC):
         self._create_model()
 
     @abc.abstractmethod
-    def predict_response_variable(self, explanatory_variable):
+    def predict_response_variable(self, **kwargs):
         """Predict the value of the response variable given values for the explanatory variable."""
         pass
 
@@ -616,6 +651,29 @@ class OLSModel(RatingModel, abc.ABC):
         vif_table = SimpleTable(vif_data, headers=['VIF'])
 
         return vif_table
+
+    def _plot_model_pred_vs_obs(self, ax):
+        """
+
+        :param ax:
+        :return:
+        """
+
+        res = self._model.fit()
+
+        ax.plot(self._model.endog, res.fittedvalues, '.', label='Observation')
+
+        x_lim = ax.get_xlim()
+
+        ax.plot(x_lim, x_lim, 'k:', label='1:1 line')
+
+        x_label = 'Observed ' + self._model.endog_names
+        y_label = 'Predicted ' + self._model.endog_names
+
+        ax.set_xlabel(x_label)
+        ax.set_ylabel(y_label)
+
+        ax.legend(loc='best', numpoints=1)
 
     def _plot_resid_probability(self, ax):
         """Residual probability plot
@@ -960,6 +1018,14 @@ class OLSModel(RatingModel, abc.ABC):
 
             self._plot_stand_ser_corr_coff(ax)
 
+        elif plot_type is 'model_pred_vs_obs':
+
+            self._plot_model_pred_vs_obs(ax)
+
+        else:
+
+            super().plot(plot_type, ax)
+
     def predict_response_variable(self, explanatory_data=None, bias_correction=False, prediction_interval=False):
         """Predict the response of the model.
 
@@ -985,6 +1051,9 @@ class OLSModel(RatingModel, abc.ABC):
                 explanatory_df = explanatory_data.get_data()
             else:
                 explanatory_df = self._data_manager.get_data()
+                res = self._model.fit()
+                observation_index = res.resid.index
+                explanatory_df = explanatory_df.ix[observation_index]
 
             exog = self._get_exogenous_matrix(explanatory_df)
 
@@ -1220,6 +1289,16 @@ class SimpleLinearRatingModel(OLSModel):
     def plot(self, plot_type='model_scatter', ax=None):
         """
 
+        Plot types:
+            model_scatter
+            variable_scatter
+            resid_vs_fitted
+            resid_vs_time
+            resid_probability
+            serial_correlation
+            model_pred_vs_obs
+            pred_vs_obs
+
         :param plot_type:
         :param ax:
         :return:
@@ -1450,12 +1529,22 @@ class MultipleLinearRatingModel(OLSModel):
     def plot(self, plot_type='model_scatter', ax=None):
         """
 
+        Plot types:
+            model_scatter
+            variable_scatter
+            resid_vs_fitted
+            resid_vs_time
+            resid_probability
+            serial_correlation
+            model_pred_vs_obs
+            pred_vs_obs
+
         :param plot_type:
         :param ax:
         :return:
         """
 
-        if plot_type == 'scatter':
+        if plot_type == 'model_scatter':
             number_of_explanatory_variables = self._model.exog.shape[1] - 1
 
             if ax is None:
@@ -1463,6 +1552,7 @@ class MultipleLinearRatingModel(OLSModel):
                 for i in range(number_of_explanatory_variables):
                     fig = plt.figure()
                     ax.append(fig.add_subplot(111))
+            # TODO: Handle case where ax is an axes
 
             for i in range(number_of_explanatory_variables):
 
