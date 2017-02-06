@@ -2,7 +2,7 @@ import abc
 import copy
 
 import numpy as np
-from numpy import log, log10, power
+from numpy import log, log10, power, sqrt
 
 from scipy import stats
 
@@ -42,17 +42,20 @@ class RatingModel(abc.ABC):
     _transform_variable_names = {None: 'x',
                                  'log': 'log(x)',
                                  'log10': 'log10(x)',
-                                 'pow2': 'power(x, 2)'
+                                 'pow2': 'power(x, 2)',
+                                 'sqrt': 'sqrt(x)'
                                  }
     _transform_functions = {None: lambda x: x,
                             'log': log,
                             'log10': log10,
-                            'pow2': lambda x: power(x, 2)
+                            'pow2': lambda x: power(x, 2),
+                            'sqrt': lambda x: sqrt(x)
                             }
     _inverse_transform_functions = {None: lambda x: x,
                                     'log': np.exp,
                                     'log10': lambda x: power(10, x),
-                                    'pow2': lambda x: power(x, 1/2)
+                                    'pow2': lambda x: power(x, 1/2),
+                                    'sqrt': lambda x: power(x, 2)
                                     }
     _float_string_format = '{:.5g}'
 
