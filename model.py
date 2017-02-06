@@ -1087,22 +1087,27 @@ class OLSModel(RatingModel, abc.ABC):
 
             if bias_correction:
 
+                # get an array of the residuals with the same dimensions of the response data
                 residuals = res.resid.as_matrix()
                 residuals = np.expand_dims(residuals, axis=0)
                 residuals = np.expand_dims(residuals, axis=2)
                 residuals = np.tile(residuals, (response_data.shape[0], 1, response_data.shape[2]))
 
-                response_data = np.tile(response_data, (1, residuals.shape[1], 1))
-
-                prediction_results = np.mean(response_data + residuals, axis=1)
+                # add the residuals to the response data
+                response_data = np.tile(response_data, (1, residuals.shape[1], 1)) + residuals
 
             else:
 
-                prediction_results = np.squeeze(response_data, axis=1)
+                # squeeze the response data to axis 1
+                response_data = np.squeeze(response_data, axis=1)
 
-            response_variable_transform = self._variable_transform[self._response_variable]
+            # apply the inverse transform to the response data
+            response_variable_transform_func = self._variable_transform[self._response_variable]
+            inverse_transform_func = self._inverse_transform_functions[response_variable_transform_func]
+            predicted_data = inverse_transform_func(response_data)
 
-            predicted_data = self._inverse_transform_functions[response_variable_transform](prediction_results)
+            # take the mean of the predicted data (for bias correction)
+            predicted_data = np.mean(predicted_data, axis=1)
 
             predicted = pd.DataFrame(data=predicted_data, index=explanatory_df.index, columns=columns)
             predicted = predicted.join(explanatory_df[list(self._explanatory_variables)], how='outer')
