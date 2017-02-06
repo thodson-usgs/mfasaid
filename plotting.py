@@ -178,11 +178,6 @@ class SurrogateModelPlotCreator:
         excluded_observation_index = model_dataset['Excluded']
         included_observation_index = ~(missing_observation_index | excluded_observation_index)
 
-        if included_observation_index.any():
-            ax.plot(constituent_variable_series.index[included_observation_index],
-                    constituent_variable_series[included_observation_index].as_matrix(),
-                    marker='o', markerfacecolor='yellow', markeredgecolor='black',
-                    linestyle='None', label='Observations included in model')
         if excluded_observation_index.any():
             ax.plot(constituent_variable_series.index[excluded_observation_index],
                     constituent_variable_series[excluded_observation_index].as_matrix(),
@@ -191,6 +186,11 @@ class SurrogateModelPlotCreator:
             ax.plot(constituent_variable_series.index[missing_observation_index],
                     constituent_variable_series[missing_observation_index].as_matrix(),
                     marker='d', color='black', linestyle='None', label='Observations missing from model')
+        if included_observation_index.any():
+            ax.plot(constituent_variable_series.index[included_observation_index],
+                    constituent_variable_series[included_observation_index].as_matrix(),
+                    marker='o', markerfacecolor='yellow', markeredgecolor='black',
+                    linestyle='None', label='Observations included in model')
 
     def _plot_predicted_time_series(self, ax):
         """
