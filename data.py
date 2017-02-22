@@ -246,6 +246,22 @@ class DataManager:
         self._data_origin.drop_duplicates(inplace=True)
         self._data_origin.reset_index(drop=True, inplace=True)
 
+    def drop_variable(self, variable_names):
+        """
+
+        :param variable_names: list-like parameter containing names of variables to drop
+        :return:
+        """
+
+        # drop the columns containing the variables
+        self._data.drop(variable_names, axis=1, errors='ignore', inplace=True)
+
+        # drop the variable origin information
+        for variable in variable_names:
+
+            variable_row = self._data_origin['variable'] == variable
+            self._data_origin = self._data_origin[~variable_row]
+
     def get_data(self):
         """Return a copy of the time series data contained within the manager.
 
@@ -392,6 +408,9 @@ class ConstituentData(DataManager):
             self._surrogate_data.add_data(surrogate_data, keep_curr_obs)
         else:
             self._surrogate_data = surrogate_data
+
+        # remove variables from the surrogate data set that are in the constituent data set
+        self._surrogate_data.drop_variable(self.get_variable_names())
 
         # update the surrogate data averaging window
         for variable in self._surrogate_data.get_variable_names():
