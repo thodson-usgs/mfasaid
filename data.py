@@ -410,7 +410,7 @@ class ConstituentData(DataManager):
             self._surrogate_data = surrogate_data
 
         # remove variables from the surrogate data set that are in the constituent data set
-        self._surrogate_data.drop_variable(self.get_variable_names())
+        self._surrogate_data.drop_variable(self._constituent_data.keys())
 
         # update the surrogate data averaging window
         for variable in self._surrogate_data.get_variable_names():
