@@ -112,7 +112,11 @@ class DataManager:
         if not isinstance(origin, pd.DataFrame):
             raise TypeError("Origin must be type pandas.DataFrame")
 
-        if list(origin.keys()) != ['variable', 'origin']:
+        correct_origin_columns = {'variable', 'origin'}
+
+        origin_columns_difference = correct_origin_columns.difference(origin.keys())
+
+        if len(origin_columns_difference) != 0:
             raise DataOriginError("Origin DataFrame does not have the correct column names")
 
         variables_grouped = origin.groupby('variable')
