@@ -1,18 +1,15 @@
 import abc
 import copy
 
-import numpy as np
-from numpy import log, log10, power, sqrt
-
-from scipy import stats
-
 import matplotlib.pyplot as plt
-
+import numpy as np
 import pandas as pd
-import statsmodels.api as sm
 import statsmodels.formula.api as smf
-from statsmodels.iolib.table import SimpleTable
+from numpy import log, log10, power, sqrt
+from scipy import stats
+from statsmodels import api as sm
 from statsmodels.iolib.summary import Summary
+from statsmodels.iolib.table import SimpleTable
 from statsmodels.iolib.tableformatting import fmt_params
 from statsmodels.sandbox.regression.predstd import wls_prediction_std
 from statsmodels.stats.outliers_influence import variance_inflation_factor
@@ -297,6 +294,8 @@ class RatingModel(abc.ABC):
         if plot_type == 'pred_vs_obs':
             self._plot_predicted_vs_observed(ax)
 
+        # TODO: Raise error if plot type not recognized
+
     def set_response_variable(self, response_variable):
         """Set the response variable of the model.
 
@@ -448,6 +447,38 @@ class OLSModel(RatingModel, abc.ABC):
                 gleft.append(bcf)
 
         return gleft
+
+    def _get_model_confidence_mean(self, exog, alpha=0.1):
+        """
+
+        :param exog:
+        :param alpha:
+        :return:
+        """
+
+        res = self._model.fit()
+
+        # exog_fit = sm.add_constant(x_fit)
+
+        y_fit = self._model.predict(res.params, exog=exog)
+
+        u_ci = np.empty(y_fit.shape)
+        l_ci = np.empty(y_fit.shape)
+
+        x_prime_x_inverse = np.linalg.inv(np.dot(self._model.exog.transpose(), self._model.exog))
+
+        t_ppf_value = stats.t.ppf(1-alpha/2, self._model.df_resid)
+
+        for i in range(len(u_ci)):
+
+            leverage = np.dot(exog[i, :], np.dot(x_prime_x_inverse, exog[i, :]))
+
+            interval_distance = t_ppf_value * np.sqrt(res.mse_resid * leverage)
+
+            u_ci[i] = y_fit[i] + interval_distance
+            l_ci[i] = y_fit[i] - interval_distance
+
+        return y_fit, l_ci, u_ci
 
     def _get_model_equation(self):
         """Get a string representation of the model equation with estimated coefficients.
@@ -823,6 +854,35 @@ class OLSModel(RatingModel, abc.ABC):
 
         plt.sca(ax)
         plt.axhline(color='black', ls='--')
+
+    @staticmethod
+    def _plot_xy_scatter_fit(ax, x_obs, y_obs, x_fit, y_fit, l_ci, u_ci, x_label, y_label):
+        """Scatter plot with fit line and confidence interval
+
+        :param ax:
+        :param x_obs:
+        :param y_obs:
+        :param x_fit:
+        :param y_fit:
+        :param l_ci:
+        :param u_ci:
+        :param x_label:
+        :param y_label:
+        :return:
+        """
+
+        # ax = plt.axes()
+
+        ax.plot(x_obs, y_obs, ls='None', marker='.', label='Observations')
+        ax.plot(x_fit, y_fit, ls='-', color='black', label='Fit line')
+        ax.plot(x_fit, l_ci, ls=':', color='black', label='Confidence interval')
+        ax.plot(x_fit, u_ci, ls=':', color='black')
+
+        ax.set_xlabel(x_label)
+        ax.set_ylabel(y_label)
+
+        ax.legend(loc='best')
+        return ax
 
     def get_explanatory_variable_summary(self):
         """Get a table of summary statistics for the explanatory variables. The summary statistics include:
@@ -1205,38 +1265,6 @@ class SimpleLinearRatingModel(OLSModel):
 
         return gleft
 
-    def _get_model_confidence_mean(self, x_fit, alpha=0.1):
-        """
-
-        :param alpha:
-        :param x_fit:
-        :return:
-        """
-
-        res = self._model.fit()
-
-        exog_fit = sm.add_constant(x_fit)
-
-        y_fit = self._model.predict(res.params, exog=exog_fit)
-
-        u_ci = np.empty(y_fit.shape)
-        l_ci = np.empty(y_fit.shape)
-
-        x_prime_x_inverse = np.linalg.inv(np.dot(self._model.exog.transpose(), self._model.exog))
-
-        t_ppf_value = stats.t.ppf(1-alpha/2, self._model.df_resid)
-
-        for i in range(len(u_ci)):
-
-            leverage = np.dot(exog_fit[i, :], np.dot(x_prime_x_inverse, exog_fit[i, :]))
-
-            interval_distance = t_ppf_value * np.sqrt(res.mse_resid * leverage)
-
-            u_ci[i] = y_fit[i] + interval_distance
-            l_ci[i] = y_fit[i] - interval_distance
-
-        return y_fit, l_ci, u_ci
-
     def _get_right_summary_table(self, res):
         """
 
@@ -1247,35 +1275,6 @@ class SimpleLinearRatingModel(OLSModel):
         gright = super()._get_right_summary_table(res)
 
         return gright
-
-    @staticmethod
-    def _plot_scatter_fit(ax, x_obs, y_obs, x_fit, y_fit, l_ci, u_ci, x_label, y_label):
-        """Scatter plot with fit line and confidence interval
-
-        :param ax:
-        :param x_obs:
-        :param y_obs:
-        :param x_fit:
-        :param y_fit:
-        :param l_ci:
-        :param u_ci:
-        :param x_label:
-        :param y_label:
-        :return:
-        """
-
-        # ax = plt.axes()
-
-        ax.plot(x_obs, y_obs, ls='None', marker='.', label='Observations')
-        ax.plot(x_fit, y_fit, ls='-', color='black', label='Fit line')
-        ax.plot(x_fit, l_ci, ls=':', color='black', label='Confidence interval')
-        ax.plot(x_fit, u_ci, ls=':', color='black')
-
-        ax.set_xlabel(x_label)
-        ax.set_ylabel(y_label)
-
-        ax.legend(loc='best')
-        return ax
 
     def get_explanatory_variable(self):
         """Returns the name of the explanatory variable used in the SLR.
@@ -1331,6 +1330,19 @@ class SimpleLinearRatingModel(OLSModel):
         x_obs = self._model.exog[:, 1]
         y_obs = self._model.endog
 
+        explanatory_variable_transform = self.get_variable_transform(self._explanatory_variables[0])
+        response_variable_transform = self.get_variable_transform(self._response_variable)
+
+        # get non-transformed values to predict response values
+        explan_inverse_func = self._inverse_transform_functions[explanatory_variable_transform]
+        explanatory_obs = explan_inverse_func(x_obs)
+        explanatory_fit = np.linspace(np.min(explanatory_obs), np.max(explanatory_obs))
+        explanatory_df = pd.DataFrame(data=explanatory_fit, columns=[self.get_explanatory_variable()])
+
+        # get the fitted response and confidence intervals
+        exog_fit = self._get_exogenous_matrix(explanatory_df).as_matrix()
+        y_fit, l_ci, u_ci = self._get_model_confidence_mean(exog_fit)
+
         if ax is None:
             fig = plt.figure()
             ax = fig.add_subplot(111)
@@ -1338,51 +1350,30 @@ class SimpleLinearRatingModel(OLSModel):
         # scatter plot as used in the model
         if plot_type is 'model_scatter':
 
-            x_fit = np.linspace(np.min(x_obs), np.max(x_obs))
-
-            y_fit, l_ci, u_ci = self._get_model_confidence_mean(x_fit)
+            x_fit = exog_fit[:, 1]
 
             x_label = self._model.exog_names[1]
             y_label = self._model.endog_names
 
-            self._plot_scatter_fit(ax, x_obs, y_obs, x_fit, y_fit, l_ci, u_ci, x_label, y_label)
+            self._plot_xy_scatter_fit(ax, x_obs, y_obs, x_fit, y_fit, l_ci, u_ci, x_label, y_label)
 
         # scatter plot as non-transformed values
         elif plot_type is 'variable_scatter':
 
-            explanatory_variable_transform = self.get_variable_transform(self._explanatory_variables[0])
-            response_variable_transform = self.get_variable_transform(self._response_variable)
+            # get response values in non-transformed space
+            response_inverse_func = self._inverse_transform_functions[response_variable_transform]
+            response_fit = response_inverse_func(y_fit)
+            response_fit_l_ci = response_inverse_func(l_ci)
+            response_fit_u_ci = response_inverse_func(u_ci)
 
-            # if neither variable is transformed, return a scatter plot
-            if not response_variable_transform and not explanatory_variable_transform:
-                self.plot(plot_type='model_scatter', ax=ax)
+            # get the response observations in non-transformed space
+            response_obs = response_inverse_func(y_obs)
 
-            else:
-
-                # get non-transformed values to predict response values
-                explan_inverse_func = self._inverse_transform_functions[explanatory_variable_transform]
-                explanatory_obs = explan_inverse_func(x_obs)
-                explanatory_fit = np.linspace(np.min(explanatory_obs), np.max(explanatory_obs))
-
-                # get response values in transformed space
-                explan_transform_func = self._transform_functions[explanatory_variable_transform]
-                x_fit = explan_transform_func(explanatory_fit)
-                y_fit, l_ci, u_ci = self._get_model_confidence_mean(x_fit)
-
-                # get response values in non-transformed space
-                response_inverse_func = self._inverse_transform_functions[response_variable_transform]
-                response_fit = response_inverse_func(y_fit)
-                response_fit_l_ci = response_inverse_func(l_ci)
-                response_fit_u_ci = response_inverse_func(u_ci)
-
-                # get the response observations in non-transformed space
-                response_obs = response_inverse_func(y_obs)
-
-                self._plot_scatter_fit(ax,
-                                       explanatory_obs, response_obs,
-                                       explanatory_fit, response_fit,
-                                       response_fit_l_ci, response_fit_u_ci,
-                                       self._explanatory_variables[0], self._response_variable)
+            self._plot_xy_scatter_fit(ax,
+                                      explanatory_obs, response_obs,
+                                      explanatory_fit, response_fit,
+                                      response_fit_l_ci, response_fit_u_ci,
+                                      self.get_explanatory_variable(), self.get_response_variable())
 
         # call super class plotting function for other plot types
         else:
@@ -1719,6 +1710,50 @@ class ComplexRatingModel(OLSModel):
             model_formula = None
 
         return model_formula
+
+    def plot(self, plot_type='variable_scatter', ax=None):
+        """
+
+        :param plot_type:
+        :param ax:
+        :return:
+        """
+
+        if ax is None:
+
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
+
+        if plot_type == 'variable_scatter':
+
+            # get the observed response and explanatory variables
+            model_dataset = self.get_model_dataset()
+            excluded_and_missing_index = model_dataset['Excluded'] & model_dataset['Missing']
+            explanatory_variable = self.get_explanatory_variable()
+            response_variable = self.get_response_variable()
+            x_obs = model_dataset.ix[~excluded_and_missing_index, explanatory_variable].as_matrix()
+            y_obs = model_dataset.ix[~excluded_and_missing_index, response_variable].as_matrix()
+
+            # get a fitted exogenous matrix
+            x_fit = np.linspace(np.min(x_obs), np.max(x_obs))
+            x_df = pd.DataFrame(data=x_obs, columns=[self.get_explanatory_variable()])
+            exog_fit = self._get_exogenous_matrix(x_df).as_matrix()
+
+            # get the inversely transformed fitted response variable and confidence intervals
+            y_fit, l_ci, u_ci = self._get_model_confidence_mean(exog_fit)
+            response_variable_transform = self.get_variable_transform(response_variable)
+            response_inverse_func = self._inverse_transform_functions[response_variable_transform]
+            y_fit = response_inverse_func(y_fit)
+            l_ci = response_inverse_func(l_ci)
+            u_ci = response_inverse_func(u_ci)
+
+            # plot the data
+            self._plot_xy_scatter_fit(ax, x_obs, y_obs, x_fit, y_fit, l_ci, u_ci,
+                                      explanatory_variable, response_variable)
+
+        else:
+
+            super().plot(plot_type, ax)
 
     def remove_explanatory_var_transform(self, transform):
         """
