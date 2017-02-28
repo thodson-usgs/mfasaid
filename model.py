@@ -856,7 +856,7 @@ class OLSModel(RatingModel, abc.ABC):
         plt.axhline(color='black', ls='--')
 
     @staticmethod
-    def _plot_xy_scatter_fit(ax, x_obs, y_obs, x_fit, y_fit, l_ci, u_ci, x_label, y_label):
+    def _plot_xy_scatter_fit(ax, x_obs, y_obs, x_fit, y_fit, l_ci, u_ci, x_label, y_label, add_legend=True):
         """Scatter plot with fit line and confidence interval
 
         :param ax:
@@ -873,7 +873,7 @@ class OLSModel(RatingModel, abc.ABC):
 
         # ax = plt.axes()
 
-        ax.plot(x_obs, y_obs, ls='None', marker='.', label='Observations')
+        ax.plot(x_obs, y_obs, ls='None', color='blue', marker='.', label='Observations')
         ax.plot(x_fit, y_fit, ls='-', color='black', label='Fit line')
         ax.plot(x_fit, l_ci, ls=':', color='black', label='Confidence interval')
         ax.plot(x_fit, u_ci, ls=':', color='black')
@@ -881,7 +881,9 @@ class OLSModel(RatingModel, abc.ABC):
         ax.set_xlabel(x_label)
         ax.set_ylabel(y_label)
 
-        ax.legend(loc='best')
+        if add_legend:
+            ax.legend(loc='best')
+
         return ax
 
     def get_explanatory_variable_summary(self):
@@ -1711,11 +1713,12 @@ class ComplexRatingModel(OLSModel):
 
         return model_formula
 
-    def plot(self, plot_type='variable_scatter', ax=None):
+    def plot(self, plot_type='variable_scatter', ax=None, add_legend=True):
         """
 
         :param plot_type:
         :param ax:
+        :param add_legend:
         :return:
         """
 
@@ -1736,7 +1739,7 @@ class ComplexRatingModel(OLSModel):
 
             # get a fitted exogenous matrix
             x_fit = np.linspace(np.min(x_obs), np.max(x_obs))
-            x_df = pd.DataFrame(data=x_obs, columns=[self.get_explanatory_variable()])
+            x_df = pd.DataFrame(data=x_fit, columns=[self.get_explanatory_variable()])
             exog_fit = self._get_exogenous_matrix(x_df).as_matrix()
 
             # get the inversely transformed fitted response variable and confidence intervals
@@ -1749,7 +1752,7 @@ class ComplexRatingModel(OLSModel):
 
             # plot the data
             self._plot_xy_scatter_fit(ax, x_obs, y_obs, x_fit, y_fit, l_ci, u_ci,
-                                      explanatory_variable, response_variable)
+                                      explanatory_variable, response_variable, add_legend)
 
         else:
 
@@ -2013,6 +2016,26 @@ class CompoundRatingModel(RatingModel):
         """
 
         return len(self._breakpoints)-1
+
+    def plot(self, plot_type='variable_scatter', ax=None):
+        """
+
+        :param plot_type:
+        :param ax:
+        :return:
+        """
+
+        if ax is None:
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
+
+        for i in range(len(self._model)):
+            if i == 0:
+                add_legend = True
+            else:
+                add_legend = False
+
+            self._model[i].plot(ax=ax, plot_type=plot_type, add_legend=add_legend)
 
     def remove_breakpoint(self, breakpoint):
         """
