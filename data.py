@@ -379,6 +379,8 @@ class ConstituentData(DataManager):
         self._constituent_data = data
 
         self._surrogate_variable_avg_window = {}
+        self._surrogate_variable_match_method = {}
+        self._surrogate_max_time_window = {}
         self._surrogate_data = None
 
         if surrogate_data:
@@ -416,10 +418,12 @@ class ConstituentData(DataManager):
         # remove variables from the surrogate data set that are in the constituent data set
         self._surrogate_data.drop_variable(self._constituent_data.keys())
 
-        # update the surrogate data averaging window
+        # update the surrogate data averaging and max windows
         for variable in self._surrogate_data.get_variable_names():
             if variable not in self._surrogate_variable_avg_window.keys():
+                self._surrogate_variable_match_method[variable] = 'average'
                 self._surrogate_variable_avg_window[variable] = 0
+                self._surrogate_max_time_window[variable] = timedelta(minutes=0)
 
         # update the dataset
         self.update_data()
@@ -456,6 +460,36 @@ class ConstituentData(DataManager):
         self._surrogate_variable_avg_window[surrogate_variable_name] = avg_window
         self.update_data()
 
+    def set_surrogate_match_method(self, surrogate_variable_name, method):
+        """
+
+        :param surrogate_variable_name:
+        :param method: 'average' or 'closest'
+        :return:
+        """
+
+        if method != 'average' and method != 'closest':
+            raise ValueError('method must be average or closest')
+
+        self._check_surrogate_variable_name(surrogate_variable_name)
+        self._surrogate_variable_match_method[surrogate_variable_name] = method
+        self.update_data()
+
+    def set_surrogate_max_time_window(self, surrogate_variable_name, time_window):
+        """
+
+        :param surrogate_variable_name:
+        :param time_window:
+        :return:
+        """
+
+        if not isinstance(time_window, Number):
+            raise TypeError("time_window must be type Number")
+
+        self._check_surrogate_variable_name(surrogate_variable_name)
+        self._surrogate_max_time_window[surrogate_variable_name] = timedelta(minutes=time_window)
+        self.update_data()
+
     def update_data(self):
         """Update the data set.
 
@@ -467,16 +501,36 @@ class ConstituentData(DataManager):
         if self._surrogate_data:
 
             # initialize data for a DataManager
-            averaged_surrogate_data = \
+            matched_surrogate_data = \
                 pd.DataFrame(index=self._data.index, columns=self._surrogate_data.get_variable_names())
             surrogate_variable_origin_data = []
 
-            # for each surrogate variable, get the averaged value and the origin
+            # iterate over all variables
             for variable in self._surrogate_data.get_variable_names():
-                for index, _ in averaged_surrogate_data.iterrows():
-                    avg_window = self._surrogate_variable_avg_window[variable]
-                    averaged_surrogate_data.ix[index, variable] = \
-                        self._surrogate_data.get_avg_variable_observation(variable, index, avg_window)
+
+                match_method = self._surrogate_variable_match_method[variable]
+
+                # iterate over all times in constituent data set
+                for index, _ in matched_surrogate_data.iterrows():
+
+                    # average matching
+                    if match_method == 'average':
+                        avg_window = self._surrogate_variable_avg_window[variable]
+                        surrogate_value = self._surrogate_data.get_avg_variable_observation(variable, index, avg_window)
+
+                    # closest-in-time matching
+                    else:
+                        closest_surrogate_obs = \
+                            self._surrogate_data.get_closest_variable_observation(variable, index)
+                        closest_surrogate_obs = closest_surrogate_obs.ix[0]
+                        max_time = self._surrogate_max_time_window[variable]
+                        if max_time < np.abs(closest_surrogate_obs.name - index):
+                            surrogate_value = np.NaN
+                        else:
+                            surrogate_value = closest_surrogate_obs.as_matrix()[0]
+
+                    matched_surrogate_data.ix[index, variable] = surrogate_value
+
                 for origin in self._surrogate_data.get_variable_origin(variable):
                     surrogate_variable_origin_data.append([variable, origin])
 
@@ -485,7 +539,7 @@ class ConstituentData(DataManager):
                 pd.DataFrame(data=surrogate_variable_origin_data, columns=['variable', 'origin'])
 
             # create data manager for new data
-            data_manager = DataManager(averaged_surrogate_data, surrogate_variable_origin)
+            data_manager = DataManager(matched_surrogate_data, surrogate_variable_origin)
 
             self.add_data(data_manager, keep_curr_obs=False)
 
@@ -529,3 +583,21 @@ class SurrogateData(DataManager):
         variable_observation = np.float(variable.ix[time_window].mean())
 
         return variable_observation
+
+    def get_closest_variable_observation(self, variable_name, time):
+        """
+
+        :param variable_name:
+        :param time:
+        :return:
+        """
+
+        self._check_variable_name(variable_name)
+
+        variable = self.get_variable(variable_name)
+
+        absolute_time_difference = np.abs(variable.index - time)
+
+        min_abs_time_diff_index = absolute_time_difference.min() == absolute_time_difference
+
+        return variable.ix[min_abs_time_diff_index]
