@@ -97,6 +97,21 @@ class RatingModel(abc.ABC):
         # initialize the model attribute
         self._model = None
 
+    def _add_transformed_variables(self, variable, dataset):
+        """
+
+        :param variable:
+        :param dataset:
+        :return:
+        """
+
+        variable_transform = self._variable_transform[variable]
+        if variable_transform is not None:
+            var_transform_name = \
+                    self._transform_variable_names[variable_transform].replace('x', variable)
+            transform_function = self._transform_functions[variable_transform]
+            dataset.ix[:, var_transform_name] = transform_function(dataset[variable])
+
     @classmethod
     def _check_transform(cls, transform):
         """
@@ -237,6 +252,12 @@ class RatingModel(abc.ABC):
         """Return a DataFrame containing the observations used in the current model."""
 
         model_dataset = pd.DataFrame(self._model_dataset.copy(deep=True))
+
+        # add the transformed response variable to the dataset
+        self._add_transformed_variables(self._response_variable, model_dataset)
+
+        for variable in self._explanatory_variables:
+            self._add_transformed_variables(variable, model_dataset)
 
         if model_dataset.shape != (0, 0):
             model_dataset.ix[:, 'Missing'] = model_dataset.isnull().any(axis=1)
@@ -379,6 +400,7 @@ class OLSModel(RatingModel, abc.ABC):
 
         removed_observation_index = self._model_dataset.index.isin(self._excluded_observations)
 
+        # TODO: Handle error that occurs when all model observations are invalid
         model = smf.ols(model_formula,
                         data=self._model_dataset,
                         subset=~removed_observation_index,
