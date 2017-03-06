@@ -520,14 +520,19 @@ class ConstituentData(DataManager):
 
                     # closest-in-time matching
                     else:
+
+                        # get the closest-in-time surrogate observation
                         closest_surrogate_obs = \
                             self._surrogate_data.get_closest_variable_observation(variable, index)
                         closest_surrogate_obs = closest_surrogate_obs.ix[0]
                         max_time = self._surrogate_max_time_window[variable]
-                        if max_time < np.abs(closest_surrogate_obs.name - index):
-                            surrogate_value = np.NaN
-                        else:
+
+                        # match the surrogate observation if the time is within the window
+                        abs_time_diff = np.abs(closest_surrogate_obs.name - index)
+                        if abs_time_diff < max_time:
                             surrogate_value = closest_surrogate_obs.as_matrix()[0]
+                        else:
+                            surrogate_value = np.NaN
 
                     matched_surrogate_data.ix[index, variable] = surrogate_value
 
