@@ -380,7 +380,7 @@ class ConstituentData(DataManager):
 
         self._surrogate_variable_avg_window = {}
         self._surrogate_variable_match_method = {}
-        self._surrogate_max_time_window = {}
+        self._surrogate_max_abs_time_diff = {}
         self._surrogate_data = None
 
         if surrogate_data:
@@ -423,7 +423,7 @@ class ConstituentData(DataManager):
             if variable not in self._surrogate_variable_avg_window.keys():
                 self._surrogate_variable_match_method[variable] = 'average'
                 self._surrogate_variable_avg_window[variable] = 0
-                self._surrogate_max_time_window[variable] = timedelta(minutes=0)
+                self._surrogate_max_abs_time_diff[variable] = 0
 
         # update the dataset
         self.update_data()
@@ -444,6 +444,28 @@ class ConstituentData(DataManager):
         """
 
         return self._surrogate_data
+
+    def get_surrogate_match_method(self, surrogate_variable_name):
+        """
+
+        :param surrogate_variable_name:
+        :return:
+        """
+
+        self._check_surrogate_variable_name(surrogate_variable_name)
+
+        return self._surrogate_variable_match_method[surrogate_variable_name]
+
+    def get_surrogate_max_abs_time_diff(self, surrogate_variable_name):
+        """
+
+        :param surrogate_variable_name:
+        :return:
+        """
+
+        self._check_surrogate_variable_name(surrogate_variable_name)
+
+        return self._surrogate_max_abs_time_diff[surrogate_variable_name]
 
     def set_surrogate_avg_window(self, surrogate_variable_name, avg_window):
         """Set the surrogate variable averaging window.
@@ -475,7 +497,7 @@ class ConstituentData(DataManager):
         self._surrogate_variable_match_method[surrogate_variable_name] = method
         self.update_data()
 
-    def set_surrogate_max_time_window(self, surrogate_variable_name, time_window):
+    def set_surrogate_max_abs_time_diff(self, surrogate_variable_name, time_window):
         """
 
         :param surrogate_variable_name:
@@ -487,7 +509,7 @@ class ConstituentData(DataManager):
             raise TypeError("time_window must be type Number")
 
         self._check_surrogate_variable_name(surrogate_variable_name)
-        self._surrogate_max_time_window[surrogate_variable_name] = timedelta(minutes=time_window)
+        self._surrogate_max_abs_time_diff[surrogate_variable_name] = time_window
         self.update_data()
 
     def update_data(self):
@@ -525,7 +547,7 @@ class ConstituentData(DataManager):
                         closest_surrogate_obs = \
                             self._surrogate_data.get_closest_variable_observation(variable, index)
                         closest_surrogate_obs = closest_surrogate_obs.ix[0]
-                        max_time = self._surrogate_max_time_window[variable]
+                        max_time = timedelta(minutes=self._surrogate_max_abs_time_diff[variable])
 
                         # match the surrogate observation if the time is within the window
                         abs_time_diff = np.abs(closest_surrogate_obs.name - index)

@@ -45,17 +45,26 @@ class AcousticProfilePlotCreator:
         water_corrected_backscatter = advm_data.get_wcb()
         sediment_corrected_backscatter = advm_data.get_scb()
 
-        avg_window = self._constituent_data_manager.get_surrogate_avg_window(acoustic_parameter)
-        avg_window = timedelta(minutes=avg_window)
+        surrogate_match_method = self._constituent_data_manager.get_surrogate_match_method(acoustic_parameter)
+
+        if surrogate_match_method == 'average':
+            time_window_width = self._constituent_data_manager.get_surrogate_avg_window(acoustic_parameter)
+            time_window_width = timedelta(minutes=time_window_width)
+        elif surrogate_match_method == 'closest':
+            time_window_width = self._constituent_data_manager.get_surrogate_max_abs_time_diff(acoustic_parameter)
 
         fig, (scb_ax, wcb_ax, mb_ax) = plt.subplots(nrows=3, sharex=True)
 
         for obs_time in observation_times:
 
-            beginning_time = obs_time - avg_window
-            ending_time = obs_time + avg_window
+            if surrogate_match_method == 'average':
+                beginning_time = obs_time - time_window_width
+                ending_time = obs_time + time_window_width
+                time_window = (beginning_time < cell_range.index) & (cell_range.index <= ending_time)
 
-            time_window = (beginning_time < cell_range.index) & (cell_range.index <= ending_time)
+            elif surrogate_match_method == 'closest':
+                surrogate_obs = advm_data.get_closest_variable_observation(acoustic_parameter, obs_time)
+                time_window = surrogate_obs.ix[0].name == cell_range.index
 
             obs_cell_range = cell_range.ix[time_window, :].as_matrix()
             obs_mb = measured_backscatter.ix[time_window, :].as_matrix()
