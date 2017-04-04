@@ -132,6 +132,22 @@ class SedimentSizeDistribution:
 
         return median_diameter
 
+    def get_number_distribution(self):
+        """
+        
+        :return: 
+        """
+
+        return self._num_dist_diameters.copy(), self._number_distribution.copy()
+
+    def get_volume_distribution(self):
+        """
+        
+        :return: 
+        """
+
+        return self._vol_dist_diameters.copy(), self._volume_distribution.copy()
+
     @staticmethod
     def mean_form_function(a, prob_dist, f_e):
         """Returns form factor for a distribution of particles as calculated with equation 3 of Throne and Meral (2008)
@@ -167,7 +183,7 @@ class SedimentSizeDistributionLogScale(SedimentSizeDistribution):
         alpha = 0.000001
         d_low_quantile = self._dist.ppf(alpha)
         d_high_quantile = self._dist.ppf(1-alpha)
-        d_dist = np.linspace(d_low_quantile, d_high_quantile, 1000)
+        d_dist = np.logspace(np.log(d_low_quantile), np.log(d_high_quantile), 1000, base=np.e)
         cdf = self._dist.cdf(d_dist)
 
         super().__init__(d_dist, cdf)
