@@ -1,4 +1,3 @@
-import abc
 import copy
 
 import numpy as np
@@ -9,33 +8,57 @@ SPEED_OF_SOUND_IN_WATER = 1442.5  # m/s
 
 class SedimentSizeDistribution:
 
-    def __init__(self, particle_diameters, cumulative_mass_distribution):
+    def __init__(self, particle_diameters, cumulative_volume_distribution):
         """
         
         :param particle_diameters: 
-        :param cumulative_mass_distribution: 
+        :param cumulative_volume_distribution: 
         """
 
-        self._cum_particle_diameters = copy.deepcopy(particle_diameters)
-        self._cumulative_mass_distribution = copy.deepcopy(cumulative_mass_distribution)
+        self._cdf_diameters = copy.deepcopy(particle_diameters)
+        self._volume_cdf = copy.deepcopy(cumulative_volume_distribution)
 
-        self._num_dist_diameters, self._number_distribution = \
-            self._calc_number_distribution(self._cum_particle_diameters, self._cumulative_mass_distribution)
-        self._vol_dist_diameters, self._volume_distribution = \
-            self._calc_volume_distribution(self._cum_particle_diameters, self._cumulative_mass_distribution)
+        self._number_cdf = self._calc_number_cdf(self._cdf_diameters, self._volume_cdf)
+
+        self._pdf_diameters, self._number_pdf = self._calc_number_pdf(self._cdf_diameters, self._volume_cdf)
+        _, self._volume_pdf = self._calc_volume_pdf(self._cdf_diameters, self._volume_cdf)
 
     @staticmethod
-    def _calc_number_distribution(diameters, cumulative_mass_distribution):
+    def _calc_number_cdf(cum_particle_diameters, volume_cdf):
+        """
+
+        :param cum_particle_diameters: Diameters of the cumulative density function
+        :param volume_cdf:
+        :return: 
+        """
+
+        diameter_diff = np.diff(cum_particle_diameters)
+        diameter_mid_points = cum_particle_diameters[:-1] + diameter_diff / 2
+
+        particle_volumes = 4 / 3 * np.pi * (diameter_mid_points / 2) ** 3
+
+        volume_fractions = np.diff(volume_cdf)
+        number_fractions = volume_fractions / particle_volumes / np.sum(volume_fractions / particle_volumes)
+
+        cumulative_number_distribution = np.repeat(np.nan, volume_cdf.shape)
+
+        cumulative_number_distribution[0] = 1 - np.sum(number_fractions)
+        cumulative_number_distribution[1:] = np.cumsum(number_fractions) + cumulative_number_distribution[0]
+
+        return cumulative_number_distribution
+
+    @staticmethod
+    def _calc_number_pdf(diameters, volume_cdf):
         """Calculates the probability density function of the size distribution by number of particles.
         
         Moore et al. 2013
         
         :param diameters: 
-        :param cumulative_mass_distribution: 
+        :param volume_cdf: 
         :return: 
         """
 
-        volume_fractions = np.diff(cumulative_mass_distribution)
+        volume_fractions = np.diff(volume_cdf)
 
         diameters_diff = np.diff(diameters)
         distribution_diameters = diameters[:-1] + diameters_diff/2
@@ -50,22 +73,22 @@ class SedimentSizeDistribution:
         return distribution_diameters, number_distribution
 
     @staticmethod
-    def _calc_volume_distribution(diameters, cumulative_mass_distribution):
-        """Calculates the probability density function of the size distribution by volume (mass) of particles.
+    def _calc_volume_pdf(diameters, cumulative_volume_distribution):
+        """Calculates the probability density function of the size distribution by volume of particles.
         
         :param diameters: 
-        :param cumulative_mass_distribution: 
+        :param cumulative_volume_distribution: 
         :return: 
         """
 
-        volume_fractions = np.diff(cumulative_mass_distribution)
+        volume_fractions = np.diff(cumulative_volume_distribution)
 
         diameters_diff = np.diff(diameters)
         distribution_diameters = diameters[:-1] + diameters_diff/2
 
-        volume_distribution = volume_fractions/diameters_diff
+        volume_pdf = volume_fractions/diameters_diff
 
-        return distribution_diameters, volume_distribution
+        return distribution_diameters, volume_pdf
 
     def calc_form_function(self, frequency):
         """
@@ -79,11 +102,11 @@ class SedimentSizeDistribution:
 
         wave_number = 2*np.pi/wavelength
 
-        dimensionless_wave_numbers = wave_number*(self._num_dist_diameters/2/1000)
+        dimensionless_wave_numbers = wave_number*(self._pdf_diameters / 2 / 1000)
 
         form_function = self.form_function(dimensionless_wave_numbers)
 
-        mean_form_function = self.mean_form_function(self._num_dist_diameters, self._number_distribution, form_function)
+        mean_form_function = self.mean_form_function(self._pdf_diameters, self._number_cdf, form_function)
 
         return mean_form_function
 
@@ -111,42 +134,79 @@ class SedimentSizeDistribution:
 
         return f_e
 
-    def get_mean_diameter(self):
+    def get_mean_diameter(self, distribution='volume'):
         """Returns the mean particle diameter of the distribution based on the volume distribution.
         
+        :param distribution:
         :return: mean_diameter 
         """
 
-        mean_diameter = np.trapz(self._vol_dist_diameters*self._volume_distribution, self._vol_dist_diameters)
+        if distribution == 'volume':
+
+            mean_diameter = np.trapz(self._pdf_diameters * self._volume_pdf, self._pdf_diameters)
+
+        elif distribution == 'number':
+
+            mean_diameter = np.trapz(self._pdf_diameters * self._volume_cdf,
+                                     self._pdf_diameters)
+
+        else:
+
+            mean_diameter = None
 
         return mean_diameter
 
-    @abc.abstractmethod
-    def get_median_diameter(self):
+    def get_median_diameter(self, distribution='volume'):
         """Returns the median particle diameter of the distribution based on the volume distribution.
         
         :return: 
         """
 
-        median_diameter = np.interp(0.5, self._cumulative_mass_distribution, self._cum_particle_diameters)
+        if distribution == 'volume':
+
+            median_diameter = np.interp(0.5, self._volume_cdf, self._cdf_diameters)
+
+        elif distribution == 'number':
+
+            median_diameter = np.interp(0.5, self._number_cdf, self._cdf_diameters)
+
+        else:
+
+            median_diameter = None
 
         return median_diameter
 
-    def get_number_distribution(self):
+    def get_number_cdf(self):
         """
         
         :return: 
         """
 
-        return self._num_dist_diameters.copy(), self._number_distribution.copy()
+        return self._cdf_diameters.copy(), self._number_cdf.copy()
 
-    def get_volume_distribution(self):
+    def get_number_pdf(self):
+        """
+        
+        :return: diameters, number_distribution
+        """
+
+        return self._pdf_diameters.copy(), self._number_pdf.copy()
+
+    def get_volume_cdf(self):
         """
         
         :return: 
         """
 
-        return self._vol_dist_diameters.copy(), self._volume_distribution.copy()
+        return self._cdf_diameters.copy(), self._volume_cdf.copy()
+
+    def get_volume_pdf(self):
+        """
+        
+        :return: diameters, volume_distribution
+        """
+
+        return self._pdf_diameters.copy(), self._volume_pdf.copy()
 
     @staticmethod
     def mean_form_function(a, prob_dist, f_e):
@@ -188,24 +248,37 @@ class SedimentSizeDistributionLogScale(SedimentSizeDistribution):
 
         super().__init__(d_dist, cdf)
 
-        self._median_diameter = median_diameter
-        self._sigma_phi = std_log
-
-    def get_mean_diameter(self):
+    def get_mean_diameter(self, distribution='volume'):
         """
         
         :return: 
         """
 
-        return self._dist.mean()
+        if distribution == 'volume':
 
-    def get_median_diameter(self):
+            mean_diameter = self._dist.mean()
+
+        else:
+
+            mean_diameter = super().get_mean_diameter(distribution)
+
+        return mean_diameter
+
+    def get_median_diameter(self, distribution='volume'):
         """
         
         :return: 
         """
 
-        return self._dist.median()
+        if distribution == 'volume':
+
+            median_diameter = self._dist.median()
+
+        else:
+
+            median_diameter = super().get_median_diameter(distribution)
+
+        return median_diameter
 
 
 class SedimentSizeDistributionPhiScale(SedimentSizeDistributionLogScale):
