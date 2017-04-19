@@ -520,7 +520,7 @@ class ConstituentData(DataManager):
         :return: None
         """
 
-        if self._surrogate_data:
+        if self._surrogate_data is not None:
 
             # initialize data for a DataManager
             matched_surrogate_data = \

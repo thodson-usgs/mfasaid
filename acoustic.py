@@ -805,6 +805,7 @@ class ADVMSedimentAcousticData(SurrogateData):
         :return: Range of cells along a single beam
         """
 
+        # TODO: Add feature to calculate nominal vs. measurement cell range
         blanking_distance = self._config_param['Blanking Distance']
         cell_size = self._config_param['Cell Size']
         number_of_cells = self._config_param['Number of Cells']

@@ -294,3 +294,40 @@ class SedimentSizeDistributionPhiScale(SedimentSizeDistributionLogScale):
         std_log = np.log(2) * sigma_phi
 
         super().__init__(median_diameter, std_log)
+
+
+class BaseBackscatterCalibrationRelation:
+
+    def __init__(self, calibration_data_set, ratio_threshold=2):
+
+        self._calibration_data_set = copy.deepcopy(calibration_data_set)
+        self._ratio_threshold = ratio_threshold
+
+    @staticmethod
+    def _create_model(calibration_data_set, ratio_threshold):
+        """
+        
+        :param calibration_data_set: 
+        :param ratio_threshold: 
+        :return: 
+        """
+
+    def plot(self):
+        """
+        
+        :return: 
+        """
+
+    def predict_base_backscatter(self, sand_concentration):
+        """
+
+        :param sand_concentration: 
+        :return: 
+        """
+
+    def predict_sand_concentration(self, base_backscatter):
+        """
+        
+        :param base_backscatter: 
+        :return: 
+        """
