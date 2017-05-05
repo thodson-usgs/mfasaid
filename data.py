@@ -70,6 +70,8 @@ class DataManager:
         :type data_path: pd.DataFrame
         """
 
+        # TODO: Make data_origin optional
+
         self._check_origin(data, data_origin)
 
         self._data = data.copy(deep=True)
@@ -367,7 +369,7 @@ class DataManager:
 
 class ConstituentData(DataManager):
     """Data manager class for constituent data"""
-
+    # TODO: Make ConstituentData immutable
     def __init__(self, data, data_origin, surrogate_data=None):
         """
 

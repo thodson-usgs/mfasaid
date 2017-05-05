@@ -240,6 +240,7 @@ class ADVMConfigParam(ADVMParam):
 
 class ADVMSedimentAcousticData(SurrogateData):
     """Data manager class for ADVM sediment acoustic data"""
+    # TODO: Make ADVMSedimentAcousticData immutable
 
     # regex string to find acoustic backscatter columns
     _abs_columns_regex = r'^(Cell\d{2}(Amp|SNR)\d{1})$'
