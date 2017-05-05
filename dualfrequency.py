@@ -1,7 +1,12 @@
 import copy
 
+import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from scipy.stats import lognorm
+
+import data
+import model
 
 SPEED_OF_SOUND_IN_WATER = 1442.5  # m/s
 
@@ -298,25 +303,94 @@ class SedimentSizeDistributionPhiScale(SedimentSizeDistributionLogScale):
 
 class BaseBackscatterCalibrationRelation:
 
-    def __init__(self, calibration_data_set, ratio_threshold=2):
+    _percent_fines_key = '% fines'
+    _ssc_key = 'SSC'
+    _ssc_sand_key = 'SSC Sand'
+    _mean_scb_key = 'MeanSCB'
+    _fines_to_sands_key = 'Fines to sands ratio'
 
-        self._calibration_data_set = copy.deepcopy(calibration_data_set)
-        self._ratio_threshold = ratio_threshold
-
-    @staticmethod
-    def _create_model(calibration_data_set, ratio_threshold):
+    def __init__(self, calibration_data_manager, ratio_threshold=2.0):
         """
         
-        :param calibration_data_set: 
+        :param calibration_data_manager: data.DataManager 
+        :param ratio_threshold: float
+        """
+
+        total_ssc = calibration_data_manager.get_variable(self._ssc_key)
+        percent_fines = calibration_data_manager.get_variable(self._percent_fines_key)
+
+        sand_concentration = self._calc_sand_concentration(total_ssc, percent_fines)
+        fines_to_sands_ratio = self._calc_fines_to_sands_ratio(percent_fines)
+
+        new_data = pd.concat([sand_concentration, fines_to_sands_ratio], axis=1)
+        new_data_origin = calibration_data_manager.get_origin()
+        new_data_manager = data.DataManager(new_data, new_data_origin)
+
+        calibration_data_manager.add_data(new_data_manager, keep_curr_obs=True)
+
+        self._model = self._create_model(calibration_data_manager, ratio_threshold)
+
+    @classmethod
+    def _calc_sand_concentration(cls, total_ssc, percent_fines):
+        """
+        
+        :param total_ssc:
+        :param percent_fines:
+        :return: 
+        """
+
+        sand_fraction = 1 - percent_fines/100
+
+        sand_concentration = sand_fraction * total_ssc
+
+        sand_concentration = sand_concentration.rename(cls._ssc_sand_key)
+
+        return sand_concentration
+
+    @classmethod
+    def _calc_fines_to_sands_ratio(cls, percent_fines):
+        """
+        
+        :param percent_fines: 
+        :return: 
+        """
+
+        fines_to_sands_ratio = percent_fines / (100 - percent_fines)
+
+        fines_to_sands_ratio = fines_to_sands_ratio.rename(cls._fines_to_sands_key)
+
+        return fines_to_sands_ratio
+
+    @classmethod
+    def _create_model(cls, calibration_data_manager, ratio_threshold):
+        """
+        
+        :param calibration_data_manager: 
         :param ratio_threshold: 
         :return: 
         """
 
-    def plot(self):
+        bbc_model = model.SimpleLinearRatingModel(calibration_data_manager, response_variable=cls._ssc_key,
+                                                  explanatory_variable=cls._mean_scb_key)
+        bbc_model.transform_response_variable('log10')
+
+        fines_to_sands_ratio = calibration_data_manager.get_variable(cls._fines_to_sands_key)
+        obs_exceeding_ratio = ratio_threshold < fines_to_sands_ratio
+        observations_to_exclude = obs_exceeding_ratio.index[obs_exceeding_ratio]
+        bbc_model.exclude_observation(observations_to_exclude)
+
+        return bbc_model
+
+    def plot(self, ax=None):
         """
         
         :return: 
         """
+
+        if ax is None:
+            ax = plt.subplit(111)
+
+        self._model.plot(ax=ax)
 
     def predict_base_backscatter(self, sand_concentration):
         """
@@ -331,3 +405,5 @@ class BaseBackscatterCalibrationRelation:
         :param base_backscatter: 
         :return: 
         """
+
+        return self._model.predict_response_variable(base_backscatter)
