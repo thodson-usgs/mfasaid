@@ -66,8 +66,8 @@ class DataManager:
 
         :param data: Pandas DataFrame with time DatetimeIndex index type.
         :type data: pd.DataFrame
-        :param data_path: Pandas DataFrame containing variable origin information.
-        :type data_path: pd.DataFrame
+        :param data_origin: Pandas DataFrame containing variable origin information.
+        :type data_origin: pd.DataFrame
         """
 
         if data_origin is None:
@@ -265,14 +265,14 @@ class DataManager:
 
                 combined_df.ix[new_df.index, variable] = new_df[variable]
 
-        self._data = combined_df.apply(pd.to_numeric, args=('coerce', ))
+        data_origin = self._data_origin.copy(deep=True)
+        combined_data_origin = data_origin.append(other._data_origin)
+        combined_data_origin.drop_duplicates(inplace=True)
+        combined_data_origin.reset_index(drop=True, inplace=True)
 
-        # combine the variable origin data
-        self._data_origin = self._data_origin.append(other._data_origin)
-        self._data_origin.drop_duplicates(inplace=True)
-        self._data_origin.reset_index(drop=True, inplace=True)
+        return type(self)(combined_df, combined_data_origin)
 
-    def drop_variable(self, variable_names):
+    def drop_variables(self, variable_names):
         """
 
         :param variable_names: list-like parameter containing names of variables to drop
@@ -280,13 +280,18 @@ class DataManager:
         """
 
         # drop the columns containing the variables
-        self._data.drop(variable_names, axis=1, errors='ignore', inplace=True)
+        data = self._data.copy(deep=True)
+        data.drop(variable_names, axis=1, errors='ignore', inplace=True)
+
+        data_origin = self._data_origin.copy(deep=True)
 
         # drop the variable origin information
         for variable in variable_names:
 
-            variable_row = self._data_origin['variable'] == variable
-            self._data_origin = self._data_origin[~variable_row]
+            variable_row = data_origin['variable'] == variable
+            data_origin = data_origin[~variable_row]
+
+        return type(self)(data, data_origin)
 
     def get_data(self):
         """Return a copy of the time series data contained within the manager.
