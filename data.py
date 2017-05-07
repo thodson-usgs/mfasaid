@@ -50,7 +50,7 @@ class DataManager:
     This class provides methods for data management subclasses.
     """
 
-    def __init__(self, data, data_origin):
+    def __init__(self, data, data_origin=None):
         """Initialize a Data object.
 
         data_origin must be a DataFrame that describes the origin of all columns in the data parameter. At least one
@@ -62,7 +62,7 @@ class DataManager:
             0           Q   Q_ILR_WY2016.txt
             1           Q   Q_ILR_WY2017.txt
             2          GH   Q_ILR_WY2017.txt
-            3   Turbidity        TurbILR.txt
+            3   Turbidity   TurbILR.txt
 
         :param data: Pandas DataFrame with time DatetimeIndex index type.
         :type data: pd.DataFrame
@@ -70,7 +70,8 @@ class DataManager:
         :type data_path: pd.DataFrame
         """
 
-        # TODO: Make data_origin optional
+        if data_origin is None:
+            data_origin = self._create_empty_origin(data)
 
         self._check_origin(data, data_origin)
 
@@ -149,6 +150,25 @@ class DataManager:
 
         if variable_name not in self.get_variable_names():
             raise ValueError('{} is not a valid variable name'.format(variable_name), variable_name)
+
+    @staticmethod
+    def _create_empty_origin(data):
+        """
+        
+        :return: 
+        """
+        variables = list(data.keys())
+
+        data = []
+
+        for var in variables:
+            data.append([var, np.nan])
+
+        origin_columns = ['variable', 'origin']
+
+        origin = pd.DataFrame(data=data, columns=origin_columns)
+
+        return origin
 
     @staticmethod
     def _load_tab_delimited_data(file_path):
