@@ -487,28 +487,34 @@ class SurrogateData(DataManager):
 
         self._check_variable_name(variable_name)
 
-        variable = self.get_variable(variable_name)
-
-        # get the subset of times with the variable
-        time_diff = timedelta(minutes=time_window_width/2.)
-        beginning_time = time - time_diff
-        ending_time = time + time_diff
-        time_window = (beginning_time < variable.index) & (variable.index <= ending_time)
-        variable_near_time = variable.ix[time_window]
-
-        # match the nearest-in-time observation
-        if match_method == 'nearest':
-            absolute_time_difference = np.abs(variable_near_time.index - time)
-            min_abs_time_diff_index = absolute_time_difference.min() == absolute_time_difference
-            nearest_observation = variable_near_time.ix[min_abs_time_diff_index]
-            variable_observation = nearest_observation.as_matrix()[0]
-
-        # get the mean observation
-        elif match_method == 'mean':
-            variable_observation = variable_near_time.mean()
+        # if the default values, use superclass behavior
+        if time_window_width == 0 and match_method == 'nearest':
+            variable_observation = super().get_variable_observation(variable_name, time)
 
         else:
-            msg = 'Unrecognized keyword value for match_method: {}'.format(match_method)
-            raise ValueError(msg)
+
+            variable = self.get_variable(variable_name)
+
+            # get the subset of times with the variable
+            time_diff = timedelta(minutes=time_window_width/2.)
+            beginning_time = time - time_diff
+            ending_time = time + time_diff
+            time_window = (beginning_time < variable.index) & (variable.index <= ending_time)
+            variable_near_time = variable.ix[time_window]
+
+            # match the nearest-in-time observation
+            if match_method == 'nearest':
+                absolute_time_difference = np.abs(variable_near_time.index - time)
+                min_abs_time_diff_index = absolute_time_difference.min() == absolute_time_difference
+                nearest_observation = variable_near_time.ix[min_abs_time_diff_index]
+                variable_observation = nearest_observation.as_matrix()[0]
+
+            # get the mean observation
+            elif match_method == 'mean':
+                variable_observation = variable_near_time.mean()
+
+            else:
+                msg = 'Unrecognized keyword value for match_method: {}'.format(match_method)
+                raise ValueError(msg)
 
         return variable_observation
