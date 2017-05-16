@@ -1,3 +1,4 @@
+import copy
 from datetime import timedelta
 
 import pandas as pd
@@ -75,7 +76,13 @@ class DataManager:
         self._data = data.copy(deep=True)
         self._data_origin = data_origin.copy(deep=True)
 
-    # TODO: Add __deepcopy__ method
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v, in self.__dict__.items():
+            setattr(result, k, copy.deepcopy(v, memo))
+        return result
 
     def _check_for_concurrent_obs(self, other):
         """Check other DataManager for concurrent observations of a variable. Raise ConcurrentObservationError if
