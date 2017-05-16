@@ -239,137 +239,13 @@ class ADVMConfigParam(ADVMParam):
             raise ValueError(value, key)
 
 
-class RawADVMSedimentData:
-    """Class for managing and processing raw ADVM sediment acoustic data"""
-    # TODO: Make ADVMSedimentAcousticData immutable
+class ADVMData:
 
-    # regex string to find acoustic backscatter columns
-    _abs_columns_regex = r'^(Cell\d{2}(Amp|SNR)\d{1})$'
+    @abc.abstractmethod
+    def __init__(self):
 
-    # regex string to find ADVM data columns
-    _advm_columns_regex = r'^(Temp|Vbeam|Cell\d{2}(Amp|SNR)\d{1})$'
-
-    def __init__(self, config_params, acoustic_data, data_origin):
-        """Initializes ADVMData instance.
-
-        :param config_params: ADVM configuration data required to process ADVM data
-        :param acoustic_data: DataFrame containing acoustic data
-        :param data_origin: DataFrame containing acoustic data origin
-        """
-
-        # TODO: Change initialization to accept a data manager instead of data and data origin
-
-        # initialize a configuration parameter object
-        self._config_param = ADVMConfigParam()
-        self._config_param.update(config_params)
-
-        # get only the ADVM data from the passed DataFrame
-        acoustic_df = acoustic_data.filter(regex=self._advm_columns_regex)
-
-        data_variable_list = list(data_origin['variable'])
-        acoustic_variable_idx = [i for i, item in enumerate(data_variable_list)
-                                 if re.search(self._advm_columns_regex, item)]
-        acoustic_data_origin = data_origin.ix[acoustic_variable_idx]
-
-        self._data_manager = DataManager(acoustic_df, acoustic_data_origin)
-
-    @staticmethod
-    def _apply_cell_range_filter(water_corrected_backscatter, cell_range, min_cell_range, max_cell_range):
-        """
-
-        :param water_corrected_backscatter:
-        :return: Water corrected backscatter with cell range filter applied
-        """
-
-        # cell_range = cell_range.as_matrix()
-
-        cells_outside_set_range = (max_cell_range < cell_range) | (cell_range < min_cell_range)
-
-        water_corrected_backscatter[cells_outside_set_range] = np.nan
-
-        return water_corrected_backscatter
-
-    def _apply_minwcb_correction(self, water_corrected_backscatter):
-        """Remove the values of the cells including and beyond the cell with the minimum water corrected
-        backscatter value.
-
-        :param water_corrected_backscatter: Water corrected backscatter array
-        :return:
-        """
-
-        number_of_cells = self._config_param['Number of Cells']
-
-        # get the column index of the minimum value in each row
-        min_wcb_index = np.argmin(water_corrected_backscatter, axis=1)
-
-        # set the index back one to include cell with min wcb for samples that have a wcb with more than one valid cell
-        valid_index = (np.sum(~np.isnan(water_corrected_backscatter), axis=1) > 1) & (min_wcb_index > 0)
-        min_wcb_index[valid_index] -= 1
-
-        # get the flat index of the minimum values
-        index_array = np.array([np.arange(water_corrected_backscatter.shape[0]), min_wcb_index])
-        flat_index = np.ravel_multi_index(index_array, water_corrected_backscatter.shape)
-
-        # get a flat matrix of the cell ranges
-        cell_range_df = self.get_cell_range()
-        cell_range_mat = cell_range_df.as_matrix()
-        cell_range_flat = cell_range_mat.flatten()
-
-        # create an nobs x ncell array of the range of the minimum values
-        # where nobs is the number of observations and ncell is the number of cells
-        min_wcb_cell_range = cell_range_flat[flat_index]
-        min_wcb_cell_range = np.tile(min_wcb_cell_range.reshape((min_wcb_cell_range.shape[0], 1)),
-                                     (1, number_of_cells))
-
-        # get the index of the cells that are beyond the cell with the minimum wcb
-        wcb_gt_min_index = cell_range_mat > min_wcb_cell_range
-
-        # find the number of bad cells
-        number_of_bad_cells = np.sum(wcb_gt_min_index, 1)
-
-        # set the index of the observations with one bad cell to false
-        wcb_gt_min_index[number_of_bad_cells == 1, :] = False
-
-        # set the cells that are further away from the adjusted range to nan
-        water_corrected_backscatter[wcb_gt_min_index] = np.nan
-
-        return water_corrected_backscatter
-
-    def _calc_acoustic_parameters(self, processing_parameters):
-        """
-
-        :return:
-        """
-        cell_range = self._calc_cell_range()
-        measured_backscatter = self._calc_measured_backscatter(processing_parameters)
-        water_corrected_backscatter = self._calc_water_corrected_backscatter(processing_parameters,
-                                                                             measured_backscatter,
-                                                                             cell_range)
-        sediment_attenuation_coefficient = self._calc_sediment_attenuation_coefficient(water_corrected_backscatter,
-                                                                                       cell_range)
-        sediment_corrected_backscatter = self._calc_sediment_corrected_backscatter(water_corrected_backscatter,
-                                                                                   sediment_attenuation_coefficient,
-                                                                                   cell_range)
-
-        mean_scb = pd.Series(sediment_corrected_backscatter.mean(axis=1), name='MeanSCB', dtype=np.float)
-
-        acoustic_data = pd.concat([mean_scb, sediment_attenuation_coefficient], axis=1)
-
-        return acoustic_data
-
-    @staticmethod
-    def _calc_alpha_w(temperature, frequency):
-        """Calculate alpha_w - the water-absorption coefficient (WAC) in dB/m.
-
-        :return: alpha_w
-        """
-
-        assert isinstance(temperature, np.ndarray) and isinstance(frequency, float)
-
-        f_T = 21.9 * 10 ** (6 - 1520 / (temperature + 273))  # temperature-dependent relaxation frequency
-        alpha_w = 8.686 * 3.38e-6 * (frequency ** 2) / f_T  # water attenuation coefficient
-
-        return alpha_w
+        self._data_manager = None
+        self._configuration_parameters = None
 
     def _calc_cell_range(self):
         """Calculate range of cells along a single beam.
@@ -400,45 +276,221 @@ class RawADVMSedimentData:
 
         return cell_range_df
 
-    @classmethod
-    def _calc_geometric_loss(cls, cell_range, **kwargs):
-        """Calculate the geometric two-way transmission loss due to spherical beam spreading
+    @staticmethod
+    def _calc_speed_of_sound(temperature):
+        """Calculate the speed of sound in water (in meters per second) based on Marczak, 1997
 
-        :param cell_range: Array of range of cells, in meters
-        :param **kwargs
-            See below
+        :param temperature: Array of temperature values, in degrees Celsius
+        :return: speed_of_sound: Speed of sound in meters per second
+        """
 
-        :Keyword Arguments:
-            * *temperature* --
-                Temperature, in Celsius
-            * *frequency* --
-                Frequency, in kilohertz
-            * *trans_rad* --
-                Transducer radius, in meters
+        speed_of_sound = 1.402385 * 10 ** 3 + 5.038813 * temperature - \
+                         (5.799136 * 10 ** -2) * temperature ** 2 + \
+                         (3.287156 * 10 ** -4) * temperature ** 3 - \
+                         (1.398845 * 10 ** -6) * temperature ** 4 + \
+                         (2.787860 * 10 ** -9) * temperature ** 5
 
+        return speed_of_sound
+
+    @staticmethod
+    def _calc_wavelength(speed_of_sound, frequency):
+        """Calculate the wavelength of an acoustic signal.
+
+        :param speed_of_sound: Array containing the speed of sound in meters per second
+        :param frequency: Scalar containing acoustic frequency in kHz
         :return:
         """
 
-        nearfield_corr = kwargs.pop('nearfield_corr', False)
+        wavelength = speed_of_sound / (frequency * 1e3)
 
-        if nearfield_corr:
+        return wavelength
 
-            temperature = kwargs['temperature']
-            frequency = np.float(kwargs['frequency'])
-            trans_rad = np.float(kwargs['trans_rad'])
+    def _create_origin_from_data_frame(self, acoustic_df):
 
-            speed_of_sound = cls._calc_speed_of_sound(temperature)
-            wavelength = cls._calc_wavelength(speed_of_sound, frequency)
-            r_crit = cls._calc_rcrit(wavelength, trans_rad)
-            psi = cls._calc_psi(r_crit, cell_range)
+        data_origin = self._data_manager.get_origin()
+        data_sources = set(data_origin['origin'])
 
-            geometric_loss = 20 * np.log10(psi * cell_range)
+        new_data_origin = pd.DataFrame(columns=['variable', 'origin'])
 
-        else:
+        for source in data_sources:
+            tmp_origin = DataManager.create_data_origin(acoustic_df, source)
+            new_data_origin = new_data_origin.append(tmp_origin)
 
-            geometric_loss = 20 * np.log10(cell_range)
+        new_data_origin.reset_index(drop=True, inplace=True)
 
-        return geometric_loss
+        return new_data_origin
+
+    def get_cell_range(self):
+        """Get a DataFrame containing the range of cells along a single beam.
+
+        :return: Range of cells along a single beam
+        """
+
+        return self._calc_cell_range()
+
+    def get_configuration_params(self):
+        """
+
+        :return: 
+        """
+
+        return copy.deepcopy(self._configuration_parameters)
+
+    def get_data(self):
+        """
+
+        :return: 
+        """
+
+        return self._data_manager.get_data()
+
+    def get_data_manager(self):
+        """
+
+        :return: 
+        """
+
+        return copy.deepcopy(self._data_manager)
+
+    def get_origin(self):
+        """
+
+        :return: 
+        """
+
+        return self._data_manager.get_origin()
+
+    def get_variable(self, variable_name):
+        """
+
+        :param variable_name: 
+        :return: 
+        """
+
+        return self._data_manager.get_variable(variable_name)
+
+    def get_variable_names(self):
+        """
+
+        :return: 
+        """
+
+        return self._data_manager.get_variable_names()
+
+
+class ProcessedADVMSedimentData(ADVMData):
+
+    def __init__(self, data_manager, configuration_parameters, processing_parameters):
+        """
+
+        :param data_manager: SurrogateData
+        :param configuration_parameters: ADVMConfigParam
+        :param processing_parameters: ADVMProcParam
+        """
+
+        super().__init__()
+
+        self._data_manager = copy.deepcopy(data_manager)
+        self._configuration_parameters = copy.deepcopy(configuration_parameters)
+        self._processing_parameters = copy.deepcopy(processing_parameters)
+
+    def add_data(self, other, keep_curr_obs=None):
+        """
+
+        :param other: ProcessedADVMSedimentData
+        :param keep_curr_obs: 
+        :return: 
+        """
+
+        if not self._configuration_parameters.is_compatible(other.get_configuration_params()) and \
+                self._processing_parameters.is_compatible(other.get_processing_params()) and \
+                isinstance(other, type(self)):
+            raise ADVMDataIncompatibleError("ADVM data sets are incompatible")
+
+        other_data_manager = other.get_data_manager()
+
+        combined_data_manager = self._data_manager.add_data(other_data_manager, keep_curr_obs=keep_curr_obs)
+
+        return type(self)(combined_data_manager, self._configuration_parameters, self._processing_parameters)
+
+    def get_processing_params(self):
+        """
+
+        :return: 
+        """
+
+        return copy.deepcopy(self._processing_parameters)
+
+    def get_variable_observation(self, variable_name, time, time_window_width=0, match_method='nearest'):
+        """
+
+        :param variable_name: 
+        :param time: 
+        :param time_window_width: 
+        :param match_method: 
+        :return: 
+        """
+
+        return self._data_manager.get_variable_observation(variable_name, time, time_window_width, match_method)
+
+
+class RawADVMSedimentData(ADVMData):
+    """Class for managing and processing raw ADVM sediment acoustic data"""
+
+    # regex string to find acoustic backscatter columns
+    _abs_columns_regex = r'^(Cell\d{2}(Amp|SNR)\d{1})$'
+
+    # regex string to find ADVM data columns
+    _advm_columns_regex = r'^(Temp|Vbeam|Cell\d{2}(Amp|SNR)\d{1})$'
+
+    def __init__(self, configuration_parameters, acoustic_data, data_origin):
+        """Initializes ADVMData instance.
+
+        :param config_params: ADVM configuration data required to process ADVM data
+        :param acoustic_data: DataFrame containing acoustic data
+        :param data_origin: DataFrame containing acoustic data origin
+        """
+
+        # TODO: Change initialization to accept a data manager instead of data and data origin
+
+        # initialize a configuration parameter object
+
+        super().__init__()
+
+        self._configuration_parameters = ADVMConfigParam()
+        self._configuration_parameters.update(configuration_parameters)
+
+        # get only the ADVM data from the passed DataFrame
+        acoustic_df = acoustic_data.filter(regex=self._advm_columns_regex)
+
+        data_variable_list = list(data_origin['variable'])
+        acoustic_variable_idx = [i for i, item in enumerate(data_variable_list)
+                                 if re.search(self._advm_columns_regex, item)]
+        acoustic_data_origin = data_origin.ix[acoustic_variable_idx]
+
+        self._data_manager = DataManager(acoustic_df, acoustic_data_origin)
+
+    def _calc_acoustic_parameters(self, processing_parameters):
+        """
+
+        :return:
+        """
+        cell_range = self._calc_cell_range()
+        measured_backscatter = self._calc_measured_backscatter(processing_parameters)
+        water_corrected_backscatter = self._calc_water_corrected_backscatter(processing_parameters,
+                                                                             measured_backscatter,
+                                                                             cell_range)
+        sediment_attenuation_coefficient = self._calc_sediment_attenuation_coefficient(water_corrected_backscatter,
+                                                                                       cell_range)
+        sediment_corrected_backscatter = self._calc_sediment_corrected_backscatter(water_corrected_backscatter,
+                                                                                   sediment_attenuation_coefficient,
+                                                                                   cell_range)
+
+        mean_scb = pd.Series(sediment_corrected_backscatter.mean(axis=1), name='MeanSCB', dtype=np.float)
+
+        acoustic_data = pd.concat([mean_scb, sediment_attenuation_coefficient], axis=1)
+
+        return acoustic_data
 
     def _calc_measured_backscatter(self, processing_parameters):
         """Calculate measured backscatter values based on processing parameters.
@@ -458,7 +510,7 @@ class RawADVMSedimentData:
             # initialize empty list to hold backscatter data frames
             backscatter_list = []
 
-            number_of_beams = self._config_param['Number of Beams']
+            number_of_beams = self._configuration_parameters['Number of Beams']
 
             for beam_number in range(1, number_of_beams + 1):
                 beam_backscatter_df = self._get_mb_array(backscatter_values, beam_number)
@@ -484,210 +536,6 @@ class RawADVMSedimentData:
 
         return backscatter_df
 
-    @staticmethod
-    def _calc_psi(r_crit, cell_range):
-        """Calculate psi - the near field correction coefficient.
-
-        "Function which accounts for the departure of the backscatter signal from spherical spreading
-        in the near field of the transducer" Downing (1995)
-
-        :param r_crit: Array containing critical range
-        :param cell_range: Array containing the mid-point distances of all of the cells
-        :return: psi
-        """
-
-        number_of_cells = cell_range.shape[1]
-
-        try:
-            Zz = cell_range / np.tile(r_crit, (1, number_of_cells))
-        except ValueError:
-            r_crit = np.expand_dims(r_crit, axis=1)
-            Zz = cell_range / np.tile(r_crit, (1, number_of_cells))
-
-        psi = (1 + 1.35 * Zz + (2.5 * Zz) ** 3.2) / (1.35 * Zz + (2.5 * Zz) ** 3.2)
-
-        return psi
-
-    @staticmethod
-    def _calc_rcrit(wavelength, trans_rad):
-        """
-        Calculate the critical distance from the transducer
-
-        :param wavelength: Array containing wavelength, in meters
-        :param trans_rad: Scalar radius of transducer, in meters
-        :return:
-        """
-
-        r_crit = (np.pi * (trans_rad ** 2)) / wavelength
-
-        return r_crit
-
-    @staticmethod
-    def _calc_sediment_attenuation_coefficient(water_corrected_backscatter, cell_range):
-        """Calculate the sediment attenuation coefficient (SAC) in dB/m.
-
-        :return: sac array
-        """
-
-        wcb = water_corrected_backscatter.as_matrix()
-        cell_range = cell_range.as_matrix()
-
-        # make sure both matrices are the same shape
-        assert wcb.shape == cell_range.shape
-
-        # create an empty nan matrix for the SAC
-        sac_arr = np.tile(np.nan, (wcb.shape[0],))
-
-        # iterate over all rows
-        for row_index in np.arange(wcb.shape[0]):
-
-            # find the column indices that are valid
-            fit_index = ~np.isnan(wcb[row_index, :])
-
-            # if there are more than one valid cells, calculate the slope
-            if np.sum(fit_index) > 1:
-
-                # find the slope of the WCB with respect to the cell range
-                x = cell_range[row_index, fit_index]
-                y = wcb[row_index, fit_index]
-                xy_mean = np.mean(x * y)
-                x_mean = np.mean(x)
-                y_mean = np.mean(y)
-                cov_xy = xy_mean - x_mean * y_mean
-                var_x = np.var(x)
-                slope = cov_xy / var_x
-
-            else:
-                continue
-
-            # calculate the SAC
-            sac_arr[row_index] = -0.5 * slope
-
-        sac_series = pd.Series(data=sac_arr, index=water_corrected_backscatter.index, name='SAC')
-
-        return sac_series
-
-    def _calc_sediment_corrected_backscatter(self, water_corrected_backscatter,
-                                             sediment_attenuation_coefficient, cell_range):
-        """
-
-        :return:
-        """
-
-        wcb = water_corrected_backscatter.as_matrix()
-        sac = sediment_attenuation_coefficient.as_matrix()
-        cell_range = cell_range.as_matrix()
-
-        try:
-            scb = wcb + 2 * np.tile(sac, (1, cell_range.shape[1])) * cell_range
-        except ValueError:
-            sac = np.expand_dims(sac, axis=1)
-            scb = wcb + 2 * np.tile(sac, (1, cell_range.shape[1])) * cell_range
-
-        scb = self._single_cell_wcb_correction(wcb, scb)
-
-        # create DateFrame to return
-        index = water_corrected_backscatter.index
-        scb_columns = ['SCB{:03}'.format(cell) for cell in range(1, self._config_param['Number of Cells'] + 1)]
-        scb_df = pd.DataFrame(index=index, data=scb, columns=scb_columns)
-
-        return scb_df
-
-    @staticmethod
-    def _calc_speed_of_sound(temperature):
-        """Calculate the speed of sound in water (in meters per second) based on Marczak, 1997
-
-        :param temperature: Array of temperature values, in degrees Celsius
-        :return: speed_of_sound: Speed of sound in meters per second
-        """
-
-        speed_of_sound = 1.402385 * 10 ** 3 + 5.038813 * temperature - \
-                         (5.799136 * 10 ** -2) * temperature ** 2 + \
-                         (3.287156 * 10 ** -4) * temperature ** 3 - \
-                         (1.398845 * 10 ** -6) * temperature ** 4 + \
-                         (2.787860 * 10 ** -9) * temperature ** 5
-
-        return speed_of_sound
-
-    @classmethod
-    def _calc_water_absorption_loss(cls, temperature, frequency, cell_range):
-        """
-
-        :param temperature:
-        :param frequency:
-        :param cell_range:
-        :return:
-        """
-
-        alpha_w = np.array(cls._calc_alpha_w(temperature, frequency))
-
-        number_of_cells = cell_range.shape[1]
-
-        try:
-            water_absorption_loss = 2 * np.tile(alpha_w, (1, number_of_cells)) * cell_range
-        except ValueError:
-            alpha_w = np.expand_dims(alpha_w, axis=1)
-            water_absorption_loss = 2 * np.tile(alpha_w, (1, number_of_cells)) * cell_range
-
-        return water_absorption_loss
-
-    def _calc_water_corrected_backscatter(self, processing_parameters, measured_backscatter, cell_range):
-        """Calculate water corrected backscatter (WCB).
-
-        :return:
-        """
-
-        acoustic_data = self._data_manager.get_data()
-
-        # calculate the water corrected backscatter
-        geometric_loss = self._calc_geometric_loss(cell_range.as_matrix(),
-                                                   temperature=acoustic_data['Temp'].as_matrix(),
-                                                   frequency=self._config_param['Frequency'],
-                                                   trans_rad=self._config_param['Effective Transducer Diameter']/2,
-                                                   nearfield_corr=processing_parameters['Near Field Correction'])
-        water_absorption_loss = self._calc_water_absorption_loss(acoustic_data['Temp'].as_matrix(),
-                                                                 self._config_param['Frequency'],
-                                                                 cell_range.as_matrix())
-        two_way_transmission_loss = geometric_loss + water_absorption_loss
-        water_corrected_backscatter = measured_backscatter.as_matrix() + two_way_transmission_loss
-
-        # adjust the water corrected backscatter profile
-        if processing_parameters['WCB Profile Adjustment']:
-
-            water_corrected_backscatter = self._apply_minwcb_correction(water_corrected_backscatter)
-
-        water_corrected_backscatter = self._remove_min_vbeam(water_corrected_backscatter,
-                                                             processing_parameters['Minimum Vbeam'])
-
-        min_cell_distance = processing_parameters['Minimum Cell Mid-Point Distance']
-        max_cell_distance = processing_parameters['Maximum Cell Mid-Point Distance']
-        water_corrected_backscatter = self._apply_cell_range_filter(water_corrected_backscatter,
-                                                                    cell_range.as_matrix(),
-                                                                    min_cell_distance,
-                                                                    max_cell_distance)
-
-        # create a data frame of the water corrected backscatter observations
-        index = acoustic_data.index
-        wcb_columns = ['WCB{:03}'.format(cell) for cell in range(1, self._config_param['Number of Cells']+1)]
-        water_corrected_backscatter_df = pd.DataFrame(index=index,
-                                                      data=water_corrected_backscatter,
-                                                      columns=wcb_columns)
-
-        return water_corrected_backscatter_df
-
-    @staticmethod
-    def _calc_wavelength(speed_of_sound, frequency):
-        """Calculate the wavelength of an acoustic signal.
-
-        :param speed_of_sound: Array containing the speed of sound in meters per second
-        :param frequency: Scalar containing acoustic frequency in kHz
-        :return:
-        """
-
-        wavelength = speed_of_sound / (frequency * 1e3)
-
-        return wavelength
-
     def _get_mb_array(self, backscatter_values, beam_number):
         """Extract measured backscatter values from the acoustic data frame.
 
@@ -696,11 +544,9 @@ class RawADVMSedimentData:
         :return: Dataframe containing backscatter from the requested beam
         """
 
-        assert type(backscatter_values) is str and type(beam_number) is int
-
         acoustic_df = self._data_manager.get_data()
 
-        number_of_cells = int(self._config_param['Number of Cells'])
+        number_of_cells = int(self._configuration_parameters['Number of Cells'])
         number_of_obs = acoustic_df.shape[0]
 
         # create an number_of_obs by number_of_cells array of NaNs
@@ -851,40 +697,6 @@ class RawADVMSedimentData:
 
         return snr_df
 
-    def _remove_min_vbeam(self, water_corrected_backscatter, minimum_vbeam):
-        """Remove observations that have a vertical beam value that are below the set threshold.
-
-        :param water_corrected_backscatter: Water corrected backscatter array
-        :return:
-        """
-
-        acoustic_df = self._data_manager.get_data()
-
-        vbeam = acoustic_df['Vbeam'].as_matrix()
-
-        index_below_min_vbeam = (vbeam < minimum_vbeam)
-
-        water_corrected_backscatter[index_below_min_vbeam, :] = np.nan
-
-        return water_corrected_backscatter
-
-    @staticmethod
-    def _single_cell_wcb_correction(water_corrected_backscatter, sediment_corrected_backscatter):
-        """
-
-        :param water_corrected_backscatter:
-        :param sediment_corrected_backscatter:
-        :return:
-        """
-
-        # row index of all single-cell wcb observations
-        single_cell_index = np.sum(~np.isnan(water_corrected_backscatter), axis=1) == 1
-
-        # replace NaN in single-cell observations with the WCB value
-        sediment_corrected_backscatter[single_cell_index, :] = water_corrected_backscatter[single_cell_index, :]
-
-        return sediment_corrected_backscatter
-
     def add_data(self, other, keep_curr_obs=None):
         """Adds other RawADMVSedimentAcoustic data instance to self.
 
@@ -898,7 +710,8 @@ class RawADVMSedimentData:
         """
 
         # test compatibility of other data set
-        if not self._config_param.is_compatible(other.get_config_params()):
+        if not self._configuration_parameters.is_compatible(other.get_config_params()) and \
+                isinstance(other, type(self)):
 
             raise ADVMDataIncompatibleError("ADVM data sets are incompatible")
 
@@ -909,7 +722,7 @@ class RawADVMSedimentData:
 
         combined_data_manager = self._data_manager.add_data(other_data_manager, keep_curr_obs=keep_curr_obs)
 
-        return type(self).from_data_manager(combined_data_manager, self._config_param)
+        return type(self).from_data_manager(combined_data_manager, self._configuration_parameters)
 
     def calculate_acoustic_parameters(self, processing_parameters):
         """
@@ -933,7 +746,28 @@ class RawADVMSedimentData:
 
         acoustic_parameter_data_manager = SurrogateData(acoustic_parameter_df, acoustic_parameter_data_origin)
 
-        return ProcessedADVMSedimentData(acoustic_parameter_data_manager, self._config_param, processing_parameters)
+        return ProcessedADVMSedimentData(acoustic_parameter_data_manager, self._configuration_parameters, processing_parameters)
+
+    def calculate_measured_backscatter(self, processing_parameters):
+        """
+        
+        :param processing_parameters: 
+        :return: 
+        """
+
+        measured_backscatter_data = self._calc_measured_backscatter(processing_parameters)
+        temperature_data = self._data_manager.get_variable('Temp')
+        vertical_beam_data = self._data_manager.get_variable('Vbeam')
+
+        measured_backscatter_data = pd.concat([temperature_data, vertical_beam_data, measured_backscatter_data])
+
+        measured_backscatter_origin = self._create_origin_from_data_frame(measured_backscatter_data)
+
+        measured_backscatter_manager = SurrogateData(measured_backscatter_data, measured_backscatter_origin)
+
+        return MeasuredBackscatterData(measured_backscatter_manager,
+                                       self._configuration_parameters,
+                                       processing_parameters)
 
     @classmethod
     def find_advm_variable_names(cls, df):
@@ -978,37 +812,13 @@ class RawADVMSedimentData:
 
         return cls(config_params, acoustic_df, data_origin)
 
-    def get_cell_range(self):
-        """Get a DataFrame containing the range of cells along a single beam.
-
-        :return: Range of cells along a single beam
-        """
-
-        return self._calc_cell_range()
-
     def get_config_params(self):
         """Return the configuration parameters.
 
         :return: ADVMConfigParam containing configuration parameters
         """
 
-        return copy.deepcopy(self._config_param)
-
-    def get_data(self):
-        """
-
-        :return: 
-        """
-
-        return self._data_manager.get_data()
-
-    def get_origin(self):
-        """
-        
-        :return: 
-        """
-
-        return self._data_manager.get_origin()
+        return copy.deepcopy(self._configuration_parameters)
 
     @classmethod
     def read_argonaut_data(cls, data_directory, filename):
@@ -1066,103 +876,387 @@ class RawADVMSedimentData:
         return cls.from_data_manager(data_manager, config_params)
 
 
-class ProcessedADVMSedimentData:
+class MeasuredBackscatterData(ProcessedADVMSedimentData):
 
-    def __init__(self, data_manager, configuration_parameters, processing_parameters):
+    @staticmethod
+    def _apply_cell_range_filter(water_corrected_backscatter, cell_range, min_cell_range, max_cell_range):
+        """
+
+        :param water_corrected_backscatter:
+        :return: Water corrected backscatter with cell range filter applied
+        """
+
+        cells_outside_set_range = (max_cell_range < cell_range) | (cell_range < min_cell_range)
+
+        water_corrected_backscatter[cells_outside_set_range] = np.nan
+
+        return water_corrected_backscatter
+
+    def _apply_minwcb_correction(self, water_corrected_backscatter):
+        """Remove the values of the cells including and beyond the cell with the minimum water corrected
+        backscatter value.
+
+        :param water_corrected_backscatter: Water corrected backscatter array
+        :return:
+        """
+
+        number_of_cells = self._configuration_parameters['Number of Cells']
+
+        # get the column index of the minimum value in each row
+        min_wcb_index = np.argmin(water_corrected_backscatter, axis=1)
+
+        # set the index back one to include cell with min wcb for samples that have a wcb with more than one valid cell
+        valid_index = (np.sum(~np.isnan(water_corrected_backscatter), axis=1) > 1) & (min_wcb_index > 0)
+        min_wcb_index[valid_index] -= 1
+
+        # get the flat index of the minimum values
+        index_array = np.array([np.arange(water_corrected_backscatter.shape[0]), min_wcb_index])
+        flat_index = np.ravel_multi_index(index_array, water_corrected_backscatter.shape)
+
+        # get a flat matrix of the cell ranges
+        cell_range_df = self.get_cell_range()
+        cell_range_mat = cell_range_df.as_matrix()
+        cell_range_flat = cell_range_mat.flatten()
+
+        # create an nobs x ncell array of the range of the minimum values
+        # where nobs is the number of observations and ncell is the number of cells
+        min_wcb_cell_range = cell_range_flat[flat_index]
+        min_wcb_cell_range = np.tile(min_wcb_cell_range.reshape((min_wcb_cell_range.shape[0], 1)),
+                                     (1, number_of_cells))
+
+        # get the index of the cells that are beyond the cell with the minimum wcb
+        wcb_gt_min_index = cell_range_mat > min_wcb_cell_range
+
+        # find the number of bad cells
+        number_of_bad_cells = np.sum(wcb_gt_min_index, 1)
+
+        # set the index of the observations with one bad cell to false
+        wcb_gt_min_index[number_of_bad_cells == 1, :] = False
+
+        # set the cells that are further away from the adjusted range to nan
+        water_corrected_backscatter[wcb_gt_min_index] = np.nan
+
+        return water_corrected_backscatter
+
+    @staticmethod
+    def _calc_alpha_w(temperature, frequency):
+        """Calculate alpha_w - the water-absorption coefficient (WAC) in dB/m.
+
+        :return: alpha_w
+        """
+
+        f_T = 21.9 * 10 ** (6 - 1520 / (temperature + 273))  # temperature-dependent relaxation frequency
+        alpha_w = 8.686 * 3.38e-6 * (frequency ** 2) / f_T  # water attenuation coefficient
+
+        return alpha_w
+
+    @staticmethod
+    def _calc_rcrit(wavelength, trans_rad):
+        """
+        Calculate the critical distance from the transducer
+
+        :param wavelength: Array containing wavelength, in meters
+        :param trans_rad: Scalar radius of transducer, in meters
+        :return:
+        """
+
+        r_crit = (np.pi * (trans_rad ** 2)) / wavelength
+
+        return r_crit
+
+    @staticmethod
+    def _calc_psi(r_crit, cell_range):
+        """Calculate psi - the near field correction coefficient.
+
+        "Function which accounts for the departure of the backscatter signal from spherical spreading
+        in the near field of the transducer" Downing (1995)
+
+        :param r_crit: Array containing critical range
+        :param cell_range: Array containing the mid-point distances of all of the cells
+        :return: psi
+        """
+
+        number_of_cells = cell_range.shape[1]
+
+        try:
+            Zz = cell_range / np.tile(r_crit, (1, number_of_cells))
+        except ValueError:
+            r_crit = np.expand_dims(r_crit, axis=1)
+            Zz = cell_range / np.tile(r_crit, (1, number_of_cells))
+
+        psi = (1 + 1.35 * Zz + (2.5 * Zz) ** 3.2) / (1.35 * Zz + (2.5 * Zz) ** 3.2)
+
+        return psi
+
+    @classmethod
+    def _calc_geometric_loss(cls, cell_range, **kwargs):
+        """Calculate the geometric two-way transmission loss due to spherical beam spreading
+
+        :param cell_range: Array of range of cells, in meters
+        :param **kwargs
+            See below
+
+        :Keyword Arguments:
+            * *temperature* --
+                Temperature, in Celsius
+            * *frequency* --
+                Frequency, in kilohertz
+            * *trans_rad* --
+                Transducer radius, in meters
+
+        :return:
+        """
+
+        nearfield_corr = kwargs.pop('nearfield_corr', False)
+
+        if nearfield_corr:
+
+            temperature = kwargs['temperature']
+            frequency = np.float(kwargs['frequency'])
+            trans_rad = np.float(kwargs['trans_rad'])
+
+            speed_of_sound = cls._calc_speed_of_sound(temperature)
+            wavelength = cls._calc_wavelength(speed_of_sound, frequency)
+            r_crit = cls._calc_rcrit(wavelength, trans_rad)
+            psi = cls._calc_psi(r_crit, cell_range)
+
+            geometric_loss = 20 * np.log10(psi * cell_range)
+
+        else:
+
+            geometric_loss = 20 * np.log10(cell_range)
+
+        return geometric_loss
+
+    @classmethod
+    def _calc_water_absorption_loss(cls, temperature, frequency, cell_range):
+        """
+
+        :param temperature:
+        :param frequency:
+        :param cell_range:
+        :return:
+        """
+
+        alpha_w = np.array(cls._calc_alpha_w(temperature, frequency))
+
+        number_of_cells = cell_range.shape[1]
+
+        try:
+            water_absorption_loss = 2 * np.tile(alpha_w, (1, number_of_cells)) * cell_range
+        except ValueError:
+            alpha_w = np.expand_dims(alpha_w, axis=1)
+            water_absorption_loss = 2 * np.tile(alpha_w, (1, number_of_cells)) * cell_range
+
+        return water_absorption_loss
+
+    def _calc_water_corrected_backscatter(self):
+        """Calculate water corrected backscatter (WCB).
+
+        :return:
+        """
+
+        acoustic_data = self._data_manager.get_data()
+        cell_range = self.get_cell_range()
+        # calculate the water corrected backscatter
+        geometric_loss = self._calc_geometric_loss(cell_range.as_matrix(),
+                                                   temperature=acoustic_data['Temp'].as_matrix(),
+                                                   frequency=self._configuration_parameters['Frequency'],
+                                                   trans_rad=self._configuration_parameters[
+                                                                 'Effective Transducer Diameter']/2,
+                                                   nearfield_corr=self._processing_parameters['Near Field Correction'])
+        water_absorption_loss = self._calc_water_absorption_loss(acoustic_data['Temp'].as_matrix(),
+                                                                 self._configuration_parameters['Frequency'],
+                                                                 cell_range.as_matrix())
+        two_way_transmission_loss = geometric_loss + water_absorption_loss
+
+        measured_backscatter = self.get_measured_backscatter()
+        water_corrected_backscatter = measured_backscatter.as_matrix() + two_way_transmission_loss
+
+        # adjust the water corrected backscatter profile
+        if self._processing_parameters['WCB Profile Adjustment']:
+
+            water_corrected_backscatter = self._apply_minwcb_correction(water_corrected_backscatter)
+
+        water_corrected_backscatter = self._remove_min_vbeam(water_corrected_backscatter,
+                                                             self._processing_parameters['Minimum Vbeam'])
+
+        min_cell_distance = self._processing_parameters['Minimum Cell Mid-Point Distance']
+        max_cell_distance = self._processing_parameters['Maximum Cell Mid-Point Distance']
+        water_corrected_backscatter = self._apply_cell_range_filter(water_corrected_backscatter,
+                                                                    cell_range.as_matrix(),
+                                                                    min_cell_distance,
+                                                                    max_cell_distance)
+
+        # create a data frame of the water corrected backscatter observations
+        index = acoustic_data.index
+        wcb_columns = ['WCB{:03}'.format(cell) for cell in
+                       range(1, self._configuration_parameters['Number of Cells']+1)]
+        water_corrected_backscatter_df = pd.DataFrame(index=index,
+                                                      data=water_corrected_backscatter,
+                                                      columns=wcb_columns)
+
+        return water_corrected_backscatter_df
+
+    def _remove_min_vbeam(self, water_corrected_backscatter, minimum_vbeam):
+        """Remove observations that have a vertical beam value that are below the set threshold.
+
+        :param water_corrected_backscatter: Water corrected backscatter array
+        :return:
+        """
+
+        acoustic_df = self._data_manager.get_data()
+
+        vbeam = acoustic_df['Vbeam'].as_matrix()
+
+        index_below_min_vbeam = (vbeam < minimum_vbeam)
+
+        water_corrected_backscatter[index_below_min_vbeam, :] = np.nan
+
+        return water_corrected_backscatter
+
+    def calculate_water_corrected_backscatter(self):
         """
         
-        :param data_manager: SurrogateData
-        :param configuration_parameters: ADVMConfigParam
-        :param processing_parameters: ADVMProcParam
-        """
-
-        self._data_manager = copy.deepcopy(data_manager)
-        self._configuration_parameters = copy.deepcopy(configuration_parameters)
-        self._processing_parameters = copy.deepcopy(processing_parameters)
-
-    def add_data(self, other, keep_curr_obs=None):
-        """
-        
-        :param other: ProcessedADVMSedimentData
-        :param keep_curr_obs: 
         :return: 
         """
 
-        if not self._configuration_parameters.is_compatible(other.get_configuration_params()) and \
-                self._processing_parameters.is_compatible(other.get_processing_params()):
-            raise ADVMDataIncompatibleError("ADVM data sets are incompatible")
+        water_corrected_backscatter_df = self._calc_water_corrected_backscatter()
+        water_corrected_backscatter_origin = self._create_origin_from_data_frame(water_corrected_backscatter_df)
+        return WaterCorrectedBackscatterData(water_corrected_backscatter_df,
+                                             water_corrected_backscatter_origin,
+                                             self._processing_parameters)
 
-        other_data_manager = other.get_data_manager()
-
-        combined_data_manager = self._data_manager.add_data(other_data_manager, keep_curr_obs=keep_curr_obs)
-
-        return type(self)(combined_data_manager, self._configuration_parameters, self._processing_parameters)
-
-    def get_configuration_params(self):
-        """
-
-        :return: 
-        """
-
-        return copy.deepcopy(self._configuration_parameters)
-
-    def get_data(self):
+    def get_measured_backscatter(self):
         """
         
         :return: 
         """
 
-        return self._data_manager.get_data()
+        data = self._data_manager.get_data()
 
-    def get_data_manager(self):
+        return data.filter(regex='^MB\d{3}$')
+
+
+class WaterCorrectedBackscatterData(ProcessedADVMSedimentData):
+
+    @staticmethod
+    def _calc_sediment_attenuation_coefficient(water_corrected_backscatter, cell_range):
+        """Calculate the sediment attenuation coefficient (SAC) in dB/m.
+
+        :return: sac array
+        """
+
+        wcb = water_corrected_backscatter.as_matrix()
+        cell_range = cell_range.as_matrix()
+
+        # make sure both matrices are the same shape
+        assert wcb.shape == cell_range.shape
+
+        # create an empty nan matrix for the SAC
+        sac_arr = np.tile(np.nan, (wcb.shape[0],))
+
+        # iterate over all rows
+        for row_index in np.arange(wcb.shape[0]):
+
+            # find the column indices that are valid
+            fit_index = ~np.isnan(wcb[row_index, :])
+
+            # if there are more than one valid cells, calculate the slope
+            if np.sum(fit_index) > 1:
+
+                # find the slope of the WCB with respect to the cell range
+                x = cell_range[row_index, fit_index]
+                y = wcb[row_index, fit_index]
+                xy_mean = np.mean(x * y)
+                x_mean = np.mean(x)
+                y_mean = np.mean(y)
+                cov_xy = xy_mean - x_mean * y_mean
+                var_x = np.var(x)
+                slope = cov_xy / var_x
+
+            else:
+                continue
+
+            # calculate the SAC
+            sac_arr[row_index] = -0.5 * slope
+
+        sac_series = pd.Series(data=sac_arr, index=water_corrected_backscatter.index, name='SAC')
+
+        return sac_series
+
+    def _calc_sediment_corrected_backscatter(self):
+        """
+
+        :return:
+        """
+
+        water_corrected_backscatter = self.get_water_corrected_backscatter()
+        wcb = water_corrected_backscatter.as_matrix()
+        sac = self.calculate_sediment_attenuation_coefficient().as_matrix()
+        cell_range = self.get_cell_range().as_matrix()
+
+        try:
+            scb = wcb + 2 * np.tile(sac, (1, cell_range.shape[1])) * cell_range
+        except ValueError:
+            sac = np.expand_dims(sac, axis=1)
+            scb = wcb + 2 * np.tile(sac, (1, cell_range.shape[1])) * cell_range
+
+        scb = self._single_cell_wcb_correction(wcb, scb)
+
+        # create DateFrame to return
+        index = water_corrected_backscatter.index
+        scb_columns = ['SCB{:03}'.format(cell) for cell
+                       in range(1, self._configuration_parameters['Number of Cells'] + 1)]
+        scb_df = pd.DataFrame(index=index, data=scb, columns=scb_columns)
+
+        return scb_df
+
+    @staticmethod
+    def _single_cell_wcb_correction(water_corrected_backscatter, sediment_corrected_backscatter):
+        """
+
+        :param water_corrected_backscatter:
+        :param sediment_corrected_backscatter:
+        :return:
+        """
+
+        # row index of all single-cell wcb observations
+        single_cell_index = np.sum(~np.isnan(water_corrected_backscatter), axis=1) == 1
+
+        # replace NaN in single-cell observations with the WCB value
+        sediment_corrected_backscatter[single_cell_index, :] = water_corrected_backscatter[single_cell_index, :]
+
+        return sediment_corrected_backscatter
+
+    def calculate_sediment_attenuation_coefficient(self):
         """
         
         :return: 
         """
 
-        return copy.deepcopy(self._data_manager)
+        water_corrected_backscatter = self.get_water_corrected_backscatter()
+        cell_range = self.get_cell_range()
 
-    def get_origin(self):
+        return self._calc_sediment_attenuation_coefficient(water_corrected_backscatter, cell_range)
+
+    def calculate_sediment_corrected_backscatter(self):
         """
         
         :return: 
         """
 
-        return self._data_manager.get_origin()
+        sediment_corrected_backscatter_df = self._calc_sediment_corrected_backscatter()
+        sediment_corrected_backscatter_origin = self._create_origin_from_data_frame(sediment_corrected_backscatter_df)
 
-    def get_processing_params(self):
-        """
-        
-        :return: 
-        """
+        sediment_corrected_backscatter_manager = SurrogateData(sediment_corrected_backscatter_df,
+                                                               sediment_corrected_backscatter_origin)
 
-        return copy.deepcopy(self._processing_parameters)
+        return SedimentCorrectedBackscatterData(sediment_corrected_backscatter_manager,
+                                                self._configuration_parameters,
+                                                self._processing_parameters)
 
-    def get_variable(self, variable_name):
-        """
-        
-        :param variable_name: 
-        :return: 
-        """
+    def get_water_corrected_backscatter(self):
 
-        return self._data_manager.get_variable(variable_name)
-
-    def get_variable_names(self):
-        """
-        
-        :return: 
-        """
-
-        return self._data_manager.get_variable_names()
-
-    def get_variable_observation(self, variable_name, time, time_window_width=0, match_method='nearest'):
-        """
-        
-        :param variable_name: 
-        :param time: 
-        :param time_window_width: 
-        :param match_method: 
-        :return: 
-        """
-
-        return self._data_manager.get_variable_observation(variable_name, time, time_window_width, match_method)
+        data = self._data_manager.get_data()
+        return data.filter(regex='^WCB\d{3}$')
