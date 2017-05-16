@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from data import DataManager
+from data import SurrogateData
 
 
 class AcousticException(Exception):
@@ -238,8 +239,8 @@ class ADVMConfigParam(ADVMParam):
             raise ValueError(value, key)
 
 
-class RawADVMSedimentAcousticData:
-    """Data manager class for ADVM sediment acoustic data"""
+class RawADVMSedimentData:
+    """Class for managing and processing raw ADVM sediment acoustic data"""
     # TODO: Make ADVMSedimentAcousticData immutable
 
     # regex string to find acoustic backscatter columns
@@ -255,6 +256,8 @@ class RawADVMSedimentAcousticData:
         :param acoustic_data: DataFrame containing acoustic data
         :param data_origin: DataFrame containing acoustic data origin
         """
+
+        # TODO: Change initialization to accept a data manager instead of data and data origin
 
         # initialize a configuration parameter object
         self._config_param = ADVMConfigParam()
@@ -908,6 +911,30 @@ class RawADVMSedimentAcousticData:
 
         return type(self).from_data_manager(combined_data_manager, self._config_param)
 
+    def calculate_acoustic_parameters(self, processing_parameters):
+        """
+        
+        :param processing_parameters: 
+        :return: 
+        """
+
+        acoustic_parameter_df = self._calc_acoustic_parameters(processing_parameters)
+
+        data_origin = self._data_manager.get_origin()
+        data_sources = set(data_origin['origin'])
+
+        acoustic_parameter_data_origin = pd.DataFrame(columns=['variable', 'origin'])
+
+        for source in data_sources:
+            tmp_origin = DataManager.create_data_origin(acoustic_parameter_df, source)
+            acoustic_parameter_data_origin = acoustic_parameter_data_origin.append(tmp_origin)
+
+        acoustic_parameter_data_origin.reset_index(drop=True, inplace=True)
+
+        acoustic_parameter_data_manager = SurrogateData(acoustic_parameter_df, acoustic_parameter_data_origin)
+
+        return ProcessedADVMSedimentData(acoustic_parameter_data_manager, self._config_param, processing_parameters)
+
     @classmethod
     def find_advm_variable_names(cls, df):
         """Finds and return a list of ADVM variables contained within a dataframe.
@@ -1019,7 +1046,7 @@ class RawADVMSedimentAcousticData:
         return cls(config_dict, acoustic_df, data_origin)
 
     @classmethod
-    def read_tab_delimited_data(cls, file_path, params=None):
+    def read_tab_delimited_data(cls, file_path, config_params):
         """Create an ADVMData object from a tab-delimited text file that contains raw acoustic variables.
 
         ADVM configuration parameters must be provided as an argument.
@@ -1032,8 +1059,110 @@ class RawADVMSedimentAcousticData:
         :return: ADVMData object
         """
         if not isinstance(params, ADVMConfigParam):
-            raise TypeError('params must be type data.ADVMConfigParam', params)
+            raise TypeError('params must be type data.ADVMConfigParam', config_params)
 
         data_manager = DataManager.read_tab_delimited_data(file_path)
 
-        return cls.from_data_manager(data_manager, params)
+        return cls.from_data_manager(data_manager, config_params)
+
+
+class ProcessedADVMSedimentData:
+
+    def __init__(self, data_manager, configuration_parameters, processing_parameters):
+        """
+        
+        :param data_manager: SurrogateData
+        :param configuration_parameters: ADVMConfigParam
+        :param processing_parameters: ADVMProcParam
+        """
+
+        self._data_manager = copy.deepcopy(data_manager)
+        self._configuration_parameters = copy.deepcopy(configuration_parameters)
+        self._processing_parameters = copy.deepcopy(processing_parameters)
+
+    def add_data(self, other, keep_curr_obs=None):
+        """
+        
+        :param other: ProcessedADVMSedimentData
+        :param keep_curr_obs: 
+        :return: 
+        """
+
+        if not self._configuration_parameters.is_compatible(other.get_configuration_params()) and \
+                self._processing_parameters.is_compatible(other.get_processing_params()):
+            raise ADVMDataIncompatibleError("ADVM data sets are incompatible")
+
+        other_data_manager = other.get_data_manager()
+
+        combined_data_manager = self._data_manager.add_data(other_data_manager, keep_curr_obs=keep_curr_obs)
+
+        return type(self)(combined_data_manager, self._configuration_parameters, self._processing_parameters)
+
+    def get_configuration_params(self):
+        """
+
+        :return: 
+        """
+
+        return copy.deepcopy(self._configuration_parameters)
+
+    def get_data(self):
+        """
+        
+        :return: 
+        """
+
+        return self._data_manager.get_data()
+
+    def get_data_manager(self):
+        """
+        
+        :return: 
+        """
+
+        return copy.deepcopy(self._data_manager)
+
+    def get_origin(self):
+        """
+        
+        :return: 
+        """
+
+        return self._data_manager.get_origin()
+
+    def get_processing_params(self):
+        """
+        
+        :return: 
+        """
+
+        return copy.deepcopy(self._processing_parameters)
+
+    def get_variable(self, variable_name):
+        """
+        
+        :param variable_name: 
+        :return: 
+        """
+
+        return self._data_manager.get_variable(variable_name)
+
+    def get_variable_names(self):
+        """
+        
+        :return: 
+        """
+
+        return self._data_manager.get_variable_names()
+
+    def get_variable_observation(self, variable_name, time, time_window_width=0, match_method='nearest'):
+        """
+        
+        :param variable_name: 
+        :param time: 
+        :param time_window_width: 
+        :param match_method: 
+        :return: 
+        """
+
+        return self._data_manager.get_variable_observation(variable_name, time, time_window_width, match_method)
