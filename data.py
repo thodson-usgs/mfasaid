@@ -1,5 +1,5 @@
+import copy
 from datetime import timedelta
-from numbers import Number
 
 import pandas as pd
 import numpy as np
@@ -10,8 +10,6 @@ import numpy as np
 Exceptions:
 
 DataException: Base class for exceptions within this module.
-
-ADVMDataIncompatibleError: An error if ADVMData instance are incompatible
 
 DataOriginError: An error if origin information is inconsistent with the data at Data subclass initialization
 
@@ -77,6 +75,14 @@ class DataManager:
 
         self._data = data.copy(deep=True)
         self._data_origin = data_origin.copy(deep=True)
+
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v, in self.__dict__.items():
+            setattr(result, k, copy.deepcopy(v, memo))
+        return result
 
     def _check_for_concurrent_obs(self, other):
         """Check other DataManager for concurrent observations of a variable. Raise ConcurrentObservationError if
@@ -151,22 +157,14 @@ class DataManager:
         if variable_name not in self.get_variable_names():
             raise ValueError('{} is not a valid variable name'.format(variable_name), variable_name)
 
-    @staticmethod
-    def _create_empty_origin(data):
+    @classmethod
+    def _create_empty_origin(cls, data):
         """
         
         :return: 
         """
-        variables = list(data.keys())
 
-        data = []
-
-        for var in variables:
-            data.append([var, np.nan])
-
-        origin_columns = ['variable', 'origin']
-
-        origin = pd.DataFrame(data=data, columns=origin_columns)
+        origin = cls.create_data_origin(data, np.NaN)
 
         return origin
 
@@ -265,12 +263,28 @@ class DataManager:
 
                 combined_df.ix[new_df.index, variable] = new_df[variable]
 
+        combined_df = combined_df.apply(pd.to_numeric, args=('ignore', ))
+
         data_origin = self._data_origin.copy(deep=True)
         combined_data_origin = data_origin.append(other._data_origin)
         combined_data_origin.drop_duplicates(inplace=True)
         combined_data_origin.reset_index(drop=True, inplace=True)
 
         return type(self)(combined_df, combined_data_origin)
+
+    @staticmethod
+    def create_data_origin(data_df, data_path):
+        """
+
+        :param data_df: 
+        :param data_path: 
+        :return: 
+        """
+
+        acoustic_variables = list(data_df)
+        data = [[variable, data_path] for variable in acoustic_variables]
+        data_origin = pd.DataFrame(data=data, columns=['variable', 'origin'])
+        return data_origin
 
     def drop_variables(self, variable_names):
         """
