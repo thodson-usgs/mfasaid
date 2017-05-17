@@ -7,8 +7,7 @@ import re
 import numpy as np
 import pandas as pd
 
-from data import DataManager
-from data import SurrogateData
+import datamanager
 
 
 class AcousticException(Exception):
@@ -247,6 +246,21 @@ class ADVMData:
         self._data_manager = None
         self._configuration_parameters = None
 
+    def __deepcopy__(self, memo):
+        """
+        Provide method for copy.deepcopy().
+
+        :param memo:
+        :return:
+        """
+
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v, in self.__dict__.items():
+            setattr(result, k, copy.deepcopy(v, memo))
+        return result
+
     def _calc_cell_range(self):
         """Calculate range of cells along a single beam.
 
@@ -255,14 +269,14 @@ class ADVMData:
 
         acoustic_data = self._data_manager.get_data()
 
-        blanking_distance = self._config_param['Blanking Distance']
-        cell_size = self._config_param['Cell Size']
-        number_of_cells = self._config_param['Number of Cells']
+        blanking_distance = self._configuration_parameters['Blanking Distance']
+        cell_size = self._configuration_parameters['Cell Size']
+        number_of_cells = self._configuration_parameters['Number of Cells']
 
         first_cell_mid_point = blanking_distance + cell_size / 2
         last_cell_mid_point = first_cell_mid_point + (number_of_cells - 1) * cell_size
 
-        slant_angle = self._config_param['Slant Angle']
+        slant_angle = self._configuration_parameters['Slant Angle']
 
         cell_range = np.linspace(first_cell_mid_point,
                                  last_cell_mid_point,
@@ -313,7 +327,7 @@ class ADVMData:
         new_data_origin = pd.DataFrame(columns=['variable', 'origin'])
 
         for source in data_sources:
-            tmp_origin = DataManager.create_data_origin(acoustic_df, source)
+            tmp_origin = datamanager.DataManager.create_data_origin(acoustic_df, source)
             new_data_origin = new_data_origin.append(tmp_origin)
 
         new_data_origin.reset_index(drop=True, inplace=True)
@@ -377,8 +391,22 @@ class ADVMData:
 
         return self._data_manager.get_variable_names()
 
+    def get_variable_origin(self, variable_name):
+        """
+        
+        :param variable_name: 
+        :return: 
+        """
 
-class ProcessedADVMSedimentData(ADVMData):
+        data_origin = self.get_origin()
+        grouped = data_origin.groupby('variable')
+        variable_group = grouped.get_group(variable_name)
+        variable_origin = list(variable_group['origin'])
+
+        return variable_origin
+
+
+class ProcessedADVMBackscatterData(ADVMData):
 
     def __init__(self, data_manager, configuration_parameters, processing_parameters):
         """
@@ -387,6 +415,10 @@ class ProcessedADVMSedimentData(ADVMData):
         :param configuration_parameters: ADVMConfigParam
         :param processing_parameters: ADVMProcParam
         """
+
+        assert isinstance(data_manager, datamanager.SurrogateData)
+        assert isinstance(configuration_parameters, ADVMConfigParam)
+        assert isinstance(processing_parameters, ADVMProcParam)
 
         super().__init__()
 
@@ -434,8 +466,8 @@ class ProcessedADVMSedimentData(ADVMData):
         return self._data_manager.get_variable_observation(variable_name, time, time_window_width, match_method)
 
 
-class RawADVMSedimentData(ADVMData):
-    """Class for managing and processing raw ADVM sediment acoustic data"""
+class RawADVMBackscatterData(ADVMData):
+    """Class for managing backscatter data"""
 
     # regex string to find acoustic backscatter columns
     _abs_columns_regex = r'^(Cell\d{2}(Amp|SNR)\d{1})$'
@@ -443,54 +475,35 @@ class RawADVMSedimentData(ADVMData):
     # regex string to find ADVM data columns
     _advm_columns_regex = r'^(Temp|Vbeam|Cell\d{2}(Amp|SNR)\d{1})$'
 
-    def __init__(self, configuration_parameters, acoustic_data, data_origin):
-        """Initializes ADVMData instance.
-
-        :param config_params: ADVM configuration data required to process ADVM data
-        :param acoustic_data: DataFrame containing acoustic data
-        :param data_origin: DataFrame containing acoustic data origin
+    def __init__(self, data_manager, configuration_parameters):
         """
-
-        # TODO: Change initialization to accept a data manager instead of data and data origin
+        
+        :param data_manager: 
+        :type data_manager: datamanager.DataManager
+        :param configuration_parameters:
+        :type configuration_parameters: ADVMConfigParam
+        """
 
         # initialize a configuration parameter object
 
+        assert isinstance(data_manager, datamanager.DataManager)
+        assert isinstance(configuration_parameters, ADVMConfigParam)
+
         super().__init__()
 
-        self._configuration_parameters = ADVMConfigParam()
-        self._configuration_parameters.update(configuration_parameters)
+        self._configuration_parameters = copy.deepcopy(configuration_parameters)
 
-        # get only the ADVM data from the passed DataFrame
+        # get only the ADVM data from the passed data manager
+        acoustic_data = data_manager.get_data()
         acoustic_df = acoustic_data.filter(regex=self._advm_columns_regex)
 
+        data_origin = data_manager.get_origin()
         data_variable_list = list(data_origin['variable'])
         acoustic_variable_idx = [i for i, item in enumerate(data_variable_list)
                                  if re.search(self._advm_columns_regex, item)]
         acoustic_data_origin = data_origin.ix[acoustic_variable_idx]
 
-        self._data_manager = DataManager(acoustic_df, acoustic_data_origin)
-
-    def _calc_acoustic_parameters(self, processing_parameters):
-        """
-
-        :return:
-        """
-        cell_range = self._calc_cell_range()
-        measured_backscatter = self._calc_measured_backscatter(processing_parameters)
-        water_corrected_backscatter = self._calc_water_corrected_backscatter(processing_parameters,
-                                                                             measured_backscatter,
-                                                                             cell_range)
-        sediment_attenuation_coefficient = self._calc_sediment_attenuation_coefficient(water_corrected_backscatter,
-                                                                                       cell_range)
-        sediment_corrected_backscatter = self._calc_sediment_corrected_backscatter(water_corrected_backscatter,
-                                                                                   sediment_attenuation_coefficient,
-                                                                                   cell_range)
-
-        mean_scb = pd.Series(sediment_corrected_backscatter.mean(axis=1), name='MeanSCB', dtype=np.float)
-
-        acoustic_data = pd.concat([mean_scb, sediment_attenuation_coefficient], axis=1)
-
-        return acoustic_data
+        self._data_manager = datamanager.DataManager(acoustic_df, acoustic_data_origin)
 
     def _calc_measured_backscatter(self, processing_parameters):
         """Calculate measured backscatter values based on processing parameters.
@@ -718,35 +731,11 @@ class RawADVMSedimentData(ADVMData):
         other_data = other.get_data()
         other_origin = other.get_origin()
 
-        other_data_manager = DataManager(other_data, other_origin)
+        other_data_manager = datamanager.DataManager(other_data, other_origin)
 
         combined_data_manager = self._data_manager.add_data(other_data_manager, keep_curr_obs=keep_curr_obs)
 
-        return type(self).from_data_manager(combined_data_manager, self._configuration_parameters)
-
-    def calculate_acoustic_parameters(self, processing_parameters):
-        """
-        
-        :param processing_parameters: 
-        :return: 
-        """
-
-        acoustic_parameter_df = self._calc_acoustic_parameters(processing_parameters)
-
-        data_origin = self._data_manager.get_origin()
-        data_sources = set(data_origin['origin'])
-
-        acoustic_parameter_data_origin = pd.DataFrame(columns=['variable', 'origin'])
-
-        for source in data_sources:
-            tmp_origin = DataManager.create_data_origin(acoustic_parameter_df, source)
-            acoustic_parameter_data_origin = acoustic_parameter_data_origin.append(tmp_origin)
-
-        acoustic_parameter_data_origin.reset_index(drop=True, inplace=True)
-
-        acoustic_parameter_data_manager = SurrogateData(acoustic_parameter_df, acoustic_parameter_data_origin)
-
-        return ProcessedADVMSedimentData(acoustic_parameter_data_manager, self._configuration_parameters, processing_parameters)
+        return type(self)(combined_data_manager, self._configuration_parameters)
 
     def calculate_measured_backscatter(self, processing_parameters):
         """
@@ -755,15 +744,17 @@ class RawADVMSedimentData(ADVMData):
         :return: 
         """
 
+        assert isinstance(processing_parameters, ADVMProcParam)
+
         measured_backscatter_data = self._calc_measured_backscatter(processing_parameters)
         temperature_data = self._data_manager.get_variable('Temp')
         vertical_beam_data = self._data_manager.get_variable('Vbeam')
 
-        measured_backscatter_data = pd.concat([temperature_data, vertical_beam_data, measured_backscatter_data])
+        measured_backscatter_data = pd.concat([temperature_data, vertical_beam_data, measured_backscatter_data], axis=1)
 
         measured_backscatter_origin = self._create_origin_from_data_frame(measured_backscatter_data)
 
-        measured_backscatter_manager = SurrogateData(measured_backscatter_data, measured_backscatter_origin)
+        measured_backscatter_manager = datamanager.SurrogateData(measured_backscatter_data, measured_backscatter_origin)
 
         return MeasuredBackscatterData(measured_backscatter_manager,
                                        self._configuration_parameters,
@@ -793,24 +784,6 @@ class RawADVMSedimentData(ADVMData):
             return None
         else:
             return advm_columns
-
-    @classmethod
-    def from_data_manager(cls, data_manager, config_params):
-        """Convert the variables within a DataManager object into an ADVMData object.
-
-        ADVM configuration parameters must be provided as an argument.
-
-        :param data_manager: DataManager object containing acoustic variables
-        :type data_manager: DataManager
-        :param config_params: ADVMConfigParam containing necessary ADVM configuration parameters
-        :type config_params: ADVMConfigParam
-        :return: ADVMData object
-        """
-
-        acoustic_df = data_manager.get_data()
-        data_origin = data_manager.get_origin()
-
-        return cls(config_params, acoustic_df, data_origin)
 
     def get_config_params(self):
         """Return the configuration parameters.
@@ -846,37 +819,38 @@ class RawADVMSedimentData(ADVMData):
         # Read specific configuration values from the Argonaut '.ctl' file into a dictionary.
         arg_ctl_file = dataset_path + ".ctl"
         config_dict = cls._read_argonaut_ctl_file(arg_ctl_file)
+        configuration_parameters = ADVMConfigParam()
+        configuration_parameters.update(config_dict)
 
         # Combine the '.snr' and '.dat.' DataFrames into a single acoustic DataFrame, make the timestamp
         # the index, and return an ADVMData object
         acoustic_df = pd.concat([dat_df, snr_df], axis=1)
+        data_origin = datamanager.DataManager.create_data_origin(acoustic_df, dataset_path + "(Arg)")
 
-        data_origin = DataManager.create_data_origin(acoustic_df, dataset_path + "(Arg)")
+        data_manager = datamanager.DataManager(acoustic_df, data_origin)
 
-        return cls(config_dict, acoustic_df, data_origin)
+        return cls(data_manager, configuration_parameters)
 
     @classmethod
-    def read_tab_delimited_data(cls, file_path, config_params):
+    def read_tab_delimited_data(cls, file_path, configuration_parameters):
         """Create an ADVMData object from a tab-delimited text file that contains raw acoustic variables.
 
         ADVM configuration parameters must be provided as an argument.
 
         :param file_path: Path to tab-delimited file
         :type file_path: str
-        :param params: ADVMConfigParam containing necessary ADVM configuration parameters
-        :type params: ADVMConfigParam
+        :param configuration_parameters: ADVMConfigParam containing necessary ADVM configuration parameters
+        :type configuration_parameters: ADVMConfigParam
 
         :return: ADVMData object
         """
-        if not isinstance(params, ADVMConfigParam):
-            raise TypeError('params must be type data.ADVMConfigParam', config_params)
 
-        data_manager = DataManager.read_tab_delimited_data(file_path)
+        data_manager = datamanager.DataManager.read_tab_delimited_data(file_path)
 
-        return cls.from_data_manager(data_manager, config_params)
+        return cls(data_manager, configuration_parameters)
 
 
-class MeasuredBackscatterData(ProcessedADVMSedimentData):
+class MeasuredBackscatterData(ProcessedADVMBackscatterData):
 
     @staticmethod
     def _apply_cell_range_filter(water_corrected_backscatter, cell_range, min_cell_range, max_cell_range):
@@ -1123,9 +1097,11 @@ class MeasuredBackscatterData(ProcessedADVMSedimentData):
 
         water_corrected_backscatter_df = self._calc_water_corrected_backscatter()
         water_corrected_backscatter_origin = self._create_origin_from_data_frame(water_corrected_backscatter_df)
-        return WaterCorrectedBackscatterData(water_corrected_backscatter_df,
-                                             water_corrected_backscatter_origin,
-                                             self._processing_parameters)
+        water_corrected_backscatter_data_manager = datamanager.SurrogateData(water_corrected_backscatter_df,
+                                                                             water_corrected_backscatter_origin)
+        return WaterCorrectedBackscatterData(water_corrected_backscatter_data_manager,
+                                             self.get_configuration_params(),
+                                             self.get_processing_params())
 
     def get_measured_backscatter(self):
         """
@@ -1138,7 +1114,7 @@ class MeasuredBackscatterData(ProcessedADVMSedimentData):
         return data.filter(regex='^MB\d{3}$')
 
 
-class WaterCorrectedBackscatterData(ProcessedADVMSedimentData):
+class WaterCorrectedBackscatterData(ProcessedADVMBackscatterData):
 
     @staticmethod
     def _calc_sediment_attenuation_coefficient(water_corrected_backscatter, cell_range):
@@ -1181,7 +1157,7 @@ class WaterCorrectedBackscatterData(ProcessedADVMSedimentData):
             # calculate the SAC
             sac_arr[row_index] = -0.5 * slope
 
-        sac_series = pd.Series(data=sac_arr, index=water_corrected_backscatter.index, name='SAC')
+        sac_series = pd.DataFrame(data=sac_arr, index=water_corrected_backscatter.index, columns=['SAC'])
 
         return sac_series
 
@@ -1193,7 +1169,9 @@ class WaterCorrectedBackscatterData(ProcessedADVMSedimentData):
 
         water_corrected_backscatter = self.get_water_corrected_backscatter()
         wcb = water_corrected_backscatter.as_matrix()
-        sac = self.calculate_sediment_attenuation_coefficient().as_matrix()
+        sediment_attenuation_coefficient_manager = self.calculate_sediment_attenuation_coefficient()
+        sac_df = sediment_attenuation_coefficient_manager.get_data()
+        sac = sac_df.as_matrix()
         cell_range = self.get_cell_range().as_matrix()
 
         try:
@@ -1238,7 +1216,12 @@ class WaterCorrectedBackscatterData(ProcessedADVMSedimentData):
         water_corrected_backscatter = self.get_water_corrected_backscatter()
         cell_range = self.get_cell_range()
 
-        return self._calc_sediment_attenuation_coefficient(water_corrected_backscatter, cell_range)
+        sediment_attenuation_coefficient = self._calc_sediment_attenuation_coefficient(water_corrected_backscatter,
+                                                                                       cell_range)
+        data_origin = self._create_origin_from_data_frame(sediment_attenuation_coefficient)
+        data_manager = datamanager.SurrogateData(sediment_attenuation_coefficient, data_origin)
+
+        return ProcessedADVMBackscatterData(data_manager, self.get_configuration_params(), self.get_processing_params())
 
     def calculate_sediment_corrected_backscatter(self):
         """
@@ -1249,14 +1232,82 @@ class WaterCorrectedBackscatterData(ProcessedADVMSedimentData):
         sediment_corrected_backscatter_df = self._calc_sediment_corrected_backscatter()
         sediment_corrected_backscatter_origin = self._create_origin_from_data_frame(sediment_corrected_backscatter_df)
 
-        sediment_corrected_backscatter_manager = SurrogateData(sediment_corrected_backscatter_df,
-                                                               sediment_corrected_backscatter_origin)
+        sediment_corrected_backscatter_manager = datamanager.SurrogateData(sediment_corrected_backscatter_df,
+                                                                           sediment_corrected_backscatter_origin)
 
         return SedimentCorrectedBackscatterData(sediment_corrected_backscatter_manager,
-                                                self._configuration_parameters,
-                                                self._processing_parameters)
+                                                self.get_configuration_params(),
+                                                self.get_processing_params())
 
     def get_water_corrected_backscatter(self):
 
         data = self._data_manager.get_data()
         return data.filter(regex='^WCB\d{3}$')
+
+
+class SedimentCorrectedBackscatterData(ProcessedADVMBackscatterData):
+
+    def calculate_mean_sediment_corrected_backscatter(self):
+        """
+        
+        :return: 
+        """
+
+        sediment_corrected_backscatter = self.get_data()
+
+        mean_sediment_corrected_backscatter = pd.DataFrame(sediment_corrected_backscatter.mean(axis=1),
+                                                           columns=['MeanSCB'], dtype=np.float)
+        data_origin = self._create_origin_from_data_frame(mean_sediment_corrected_backscatter)
+        data_manager = datamanager.SurrogateData(mean_sediment_corrected_backscatter, data_origin)
+
+        return ProcessedADVMBackscatterData(data_manager, self.get_configuration_params(), self.get_processing_params())
+
+
+class ADVMBackscatterDataProcessor:
+
+    def __init__(self, raw_advm_backscatter_data):
+        """
+        
+        :param raw_advm_backscatter_data: 
+        :type raw_advm_backscatter_data: RawADVMBackscatterData
+        """
+
+        self._raw_advm_backscatter_data = copy.deepcopy(raw_advm_backscatter_data)
+        self._measured_backscatter_data = None
+        self._water_corrected_backscatter_data = None
+        self._sediment_corrected_backscatter_data = None
+
+    @classmethod
+    def read_argonaut_data(cls, data_directory, filename):
+        """
+        
+        :param data_directory: 
+        :param filename: 
+        :return: 
+        """
+
+        raw_advm_backscatter_data = RawADVMBackscatterData.read_argonaut_data(data_directory, filename)
+
+        return cls(raw_advm_backscatter_data)
+
+    def calculate_acoustic_parameters(self, processing_parameters):
+        """
+        
+        :param processing_parameters: 
+        :return: 
+        """
+
+        self._measured_backscatter_data = \
+            self._raw_advm_backscatter_data.calculate_measured_backscatter(processing_parameters)
+        self._water_corrected_backscatter_data = self._measured_backscatter_data.calculate_water_corrected_backscatter()
+        self._sediment_corrected_backscatter_data = \
+            self._water_corrected_backscatter_data.calculate_sediment_corrected_backscatter()
+
+        sediment_attenuation_coefficient = \
+            self._water_corrected_backscatter_data.calculate_sediment_attenuation_coefficient()
+        mean_sediment_corrected_backscatter = \
+            self._sediment_corrected_backscatter_data.calculate_mean_sediment_corrected_backscatter()
+
+        acoustic_parameters = sediment_attenuation_coefficient.add_data(mean_sediment_corrected_backscatter)
+
+        return acoustic_parameters
