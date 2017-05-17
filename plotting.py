@@ -3,7 +3,7 @@ import numpy as np
 
 from datetime import timedelta
 
-import data
+import datamanager
 import stats
 
 
@@ -168,7 +168,7 @@ class SurrogateModelPlotCreator:
 
         self._surrogate_data_manager = model_data_manager.get_surrogate_data_manager()
 
-        if not isinstance(self._surrogate_data_manager, data.SurrogateData):
+        if not isinstance(self._surrogate_data_manager, datamanager.SurrogateData):
             raise TypeError("Rating model data manager must have an associated surrogate data manager.")
 
     def _plot_constituent_time_series(self, ax):

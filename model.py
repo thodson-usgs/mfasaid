@@ -14,7 +14,7 @@ from statsmodels.iolib.tableformatting import fmt_params
 from statsmodels.sandbox.regression.predstd import wls_prediction_std
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 
-import data
+import datamanager
 import stats as saidstats
 
 
@@ -60,11 +60,11 @@ class RatingModel(abc.ABC):
         """Initialize a RatingModel object.
 
         :param data_manager: Data manager containing response and explanatory variables.
-        :type data_manager: data.DataManager
+        :type data_manager: datamanager.DataManager
         :param response_variable:
         """
 
-        if not isinstance(data_manager, data.DataManager):
+        if not isinstance(data_manager, datamanager.DataManager):
             raise TypeError("data_manager must be type data.DataManager")
 
         self._data_manager = data_manager
@@ -961,7 +961,7 @@ class OLSModel(RatingModel, abc.ABC):
         raw_residuals = res.resid.rename('Raw Residual')
 
         # add estimated response
-        explanatory_data = data.DataManager(self._model_dataset.ix[model_data_index, :], self._model_data_origin)
+        explanatory_data = datamanager.DataManager(self._model_dataset.ix[model_data_index, :], self._model_data_origin)
         predicted_response = self.predict_response_variable(explanatory_data=explanatory_data, bias_correction=True)
         estimated_response = predicted_response[response_variable]
         estimated_response = estimated_response.rename('Estimated ' + response_variable)
@@ -1145,7 +1145,7 @@ class OLSModel(RatingModel, abc.ABC):
         interval is returned.
 
         :param explanatory_data: Data manager containing explanatory variable data
-        :type explanatory_data: data.DataManager
+        :type explanatory_data: datamanager.DataManager
         :param bias_correction: Indicate whether or not to use bias correction
         :type bias_correction: bool
         :param prediction_interval: Indicate whether or not to return a 90% prediction interval
@@ -1868,7 +1868,7 @@ class CompoundRatingModel(RatingModel):
                     origin_data.append([variable, origin])
             model_data_origin = pd.DataFrame(data=origin_data, columns=['variable', 'origin'])
 
-            segment_data_manager = data.DataManager(self._model_dataset.ix[segment_range_index, :], model_data_origin)
+            segment_data_manager = datamanager.DataManager(self._model_dataset.ix[segment_range_index, :], model_data_origin)
 
             segment_model = ComplexRatingModel(segment_data_manager,
                                                response_variable=self.get_response_variable(),
@@ -2176,8 +2176,8 @@ class CompoundRatingModel(RatingModel):
             lower_bound = self._breakpoints[i]
             upper_bound = self._breakpoints[i+1]
             segment_index = (lower_bound <= explanatory_series) & (explanatory_series < upper_bound)
-            predictor_data_manager = data.DataManager(explanatory_df.ix[segment_index, :],
-                                                      explanatory_origin)
+            predictor_data_manager = datamanager.DataManager(explanatory_df.ix[segment_index, :],
+                                                             explanatory_origin)
             segment_predicted = self._model[i].predict_response_variable(explanatory_data=predictor_data_manager,
                                                                          bias_correction=bias_correction,
                                                                          prediction_interval=prediction_interval)
