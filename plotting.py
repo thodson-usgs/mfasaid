@@ -7,6 +7,95 @@ import datamanager
 import stats
 
 
+class LineStyleCreator:
+
+    def __init__(self):
+
+        self._line_color_iterator = self._create_line_color_iterator()
+        self._line_marker_iterator = self._create_line_marker_iterator()
+        self._line_style_iterator = self._create_line_style_iterator()
+
+    @staticmethod
+    def _create_line_color_iterator():
+
+        base_color_keys = matplotlib.colors.BASE_COLORS.keys()
+        base_color_iterator = iter(base_color_keys)
+
+        return base_color_iterator
+
+    @staticmethod
+    def _create_line_marker_iterator():
+
+        line_marker_keys = matplotlib.lines.lineMarkers.keys()
+        line_marker_iterator = iter(line_marker_keys)
+
+        return line_marker_iterator
+
+    @staticmethod
+    def _create_line_style_iterator():
+
+        line_style_keys = matplotlib.lines.lineStyles.keys()
+        line_style_iterator = iter(line_style_keys)
+
+        return line_style_iterator
+
+    def get_line_color(self):
+
+        try:
+            line_color = next(self._line_color_iterator)
+        except StopIteration:
+            self._line_color_iterator = self._create_line_color_iterator()
+            line_color = self.get_line_color()
+
+        return line_color
+
+    def get_line_marker(self):
+
+        try:
+            line_marker = next(self._line_marker_iterator)
+        except StopIteration:
+            self._line_marker_iterator = self._create_line_marker_iterator()
+            line_marker = self.get_line_marker()
+
+        return line_marker
+
+    def get_line_properties(self):
+
+        line_color = self.get_line_color()
+        line_marker = self.get_line_marker()
+        line_style = self.get_line_style()
+
+        return line_color, line_style, line_marker
+
+    def get_line_style(self):
+
+        try:
+            line_style = next(self._line_style_iterator)
+        except StopIteration:
+            self._line_style_iterator = self._create_line_style_iterator()
+            line_style = self.get_line_style()
+
+        return line_style
+
+    def get_line_style_string(self):
+
+        line_color = self.get_line_color()
+        line_style = self.get_line_style()
+        line_marker = self.get_line_marker()
+
+        line_style_description = matplotlib.lines.lineStyles[line_style]
+        line_marker_description = matplotlib.lines.lineMarkers[line_marker]
+
+        while line_style_description == '_draw_nothing' and line_marker_description == 'nothing':
+            line_style = self.get_line_style()
+            line_style_description = matplotlib.lines.lineStyles[line_style]
+
+        line_style_string = line_color + line_style + line_marker
+        line_style_string = line_style_string.replace('None', '')
+
+        return line_style_string
+
+
 class AcousticProfilePlotCreator:
     """Plot acoustic profiles from """
 
