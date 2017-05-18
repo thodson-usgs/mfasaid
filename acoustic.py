@@ -485,12 +485,9 @@ class ProcessedBackscatterData(ProcessedData, BackscatterData):
 
         super().__init__(data_manager, configuration_parameters, processing_parameters)
 
-    def plot(self, index=None, ax=None):
+    def plot(self, index, ax=None):
 
         data = self.get_data()
-
-        if index is None:
-            index = data.index
 
         if ax is None:
             fig = plt.figure()
@@ -509,7 +506,7 @@ class ProcessedBackscatterData(ProcessedData, BackscatterData):
             ax.plot(cell_range.ix[i], data.ix[i], ls=line_style, marker=marker, color=color)
 
         ax.set_xlabel('Range, in meters')
-        ax.set_ylabel(self._backscatter_name + ', in decibels')
+        ax.set_ylabel(self._backscatter_name + ',\nin decibels')
 
         return ax
 
@@ -1409,6 +1406,30 @@ class ADVMBackscatterDataProcessor:
             processing_parameters = self._measured_backscatter_data.get_processing_parameters()
 
         return processing_parameters
+
+    def plot(self, index):
+        """
+        
+        :param index: 
+        :return: 
+        """
+
+        if self._acoustic_parameters is not None:
+
+            fig, (scb_ax, wcb_ax, mb_ax) = plt.subplots(nrows=3, sharex=True)
+
+            self._measured_backscatter_data.plot(index, ax=mb_ax)
+            self._water_corrected_backscatter_data.plot(index, ax=wcb_ax)
+            self._sediment_corrected_backscatter_data.plot(index, ax=scb_ax)
+
+            scb_ax.set_xlabel('')
+            wcb_ax.set_xlabel('')
+
+        else:
+
+            fig = None
+
+        return fig
 
     @classmethod
     def read_argonaut_data(cls, data_directory, filename):
