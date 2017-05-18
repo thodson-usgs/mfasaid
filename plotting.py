@@ -1,3 +1,4 @@
+import matplotlib.lines
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -7,7 +8,7 @@ import datamanager
 import stats
 
 
-class LineStyleCreator:
+class LineStyleGenerator:
 
     def __init__(self):
 
@@ -49,16 +50,6 @@ class LineStyleCreator:
 
         return line_color
 
-    def get_line_marker(self):
-
-        try:
-            line_marker = next(self._line_marker_iterator)
-        except StopIteration:
-            self._line_marker_iterator = self._create_line_marker_iterator()
-            line_marker = self.get_line_marker()
-
-        return line_marker
-
     def get_line_properties(self):
 
         line_color = self.get_line_color()
@@ -67,7 +58,7 @@ class LineStyleCreator:
 
         return line_color, line_style, line_marker
 
-    def get_line_style(self):
+    def get_line_style(self, draw_nothing=True):
 
         try:
             line_style = next(self._line_style_iterator)
@@ -75,13 +66,19 @@ class LineStyleCreator:
             self._line_style_iterator = self._create_line_style_iterator()
             line_style = self.get_line_style()
 
+        line_style_description = matplotlib.lines.lineStyles[line_style]
+
+        if (not draw_nothing) and line_style_description == '_draw_nothing':
+
+            line_style = self.get_line_style(draw_nothing)
+
         return line_style
 
     def get_line_style_string(self):
 
         line_color = self.get_line_color()
         line_style = self.get_line_style()
-        line_marker = self.get_line_marker()
+        line_marker = self.get_marker()
 
         line_style_description = matplotlib.lines.lineStyles[line_style]
         line_marker_description = matplotlib.lines.lineMarkers[line_marker]
@@ -94,6 +91,16 @@ class LineStyleCreator:
         line_style_string = line_style_string.replace('None', '')
 
         return line_style_string
+
+    def get_marker(self):
+
+        try:
+            line_marker = next(self._line_marker_iterator)
+        except StopIteration:
+            self._line_marker_iterator = self._create_line_marker_iterator()
+            line_marker = self.get_marker()
+
+        return line_marker
 
 
 class AcousticProfilePlotCreator:
