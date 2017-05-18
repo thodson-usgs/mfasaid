@@ -4,10 +4,12 @@ import linecache
 import os
 import re
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
 import datamanager
+from plotting import LineStyleGenerator
 
 
 class AcousticException(Exception):
@@ -261,35 +263,6 @@ class ADVMData:
             setattr(result, k, copy.deepcopy(v, memo))
         return result
 
-    def _calc_cell_range(self):
-        """Calculate range of cells along a single beam.
-
-        :return: Range of cells along a single beam
-        """
-
-        acoustic_data = self._data_manager.get_data()
-
-        blanking_distance = self._configuration_parameters['Blanking Distance']
-        cell_size = self._configuration_parameters['Cell Size']
-        number_of_cells = self._configuration_parameters['Number of Cells']
-
-        first_cell_mid_point = blanking_distance + cell_size / 2
-        last_cell_mid_point = first_cell_mid_point + (number_of_cells - 1) * cell_size
-
-        slant_angle = self._configuration_parameters['Slant Angle']
-
-        cell_range = np.linspace(first_cell_mid_point,
-                                 last_cell_mid_point,
-                                 num=number_of_cells) / np.cos(np.radians(slant_angle))
-
-        cell_range = np.tile(cell_range, (acoustic_data.shape[0], 1))
-
-        col_names = ['R{:03}'.format(cell) for cell in range(1, number_of_cells+1)]
-
-        cell_range_df = pd.DataFrame(data=cell_range, index=acoustic_data.index, columns=col_names)
-
-        return cell_range_df
-
     @staticmethod
     def _calc_speed_of_sound(temperature):
         """Calculate the speed of sound in water (in meters per second) based on Marczak, 1997
@@ -334,15 +307,7 @@ class ADVMData:
 
         return new_data_origin
 
-    def get_cell_range(self):
-        """Get a DataFrame containing the range of cells along a single beam.
-
-        :return: Range of cells along a single beam
-        """
-
-        return self._calc_cell_range()
-
-    def get_configuration_params(self):
+    def get_configuration_parameters(self):
         """
 
         :return: 
@@ -391,6 +356,18 @@ class ADVMData:
 
         return self._data_manager.get_variable_names()
 
+    def get_variable_observation(self, variable_name, time, time_window_width=0, match_method='nearest'):
+        """
+
+        :param variable_name: 
+        :param time: 
+        :param time_window_width: 
+        :param match_method: 
+        :return: 
+        """
+
+        return self._data_manager.get_variable_observation(variable_name, time, time_window_width, match_method)
+
     def get_variable_origin(self, variable_name):
         """
         
@@ -406,7 +383,7 @@ class ADVMData:
         return variable_origin
 
 
-class ProcessedADVMBackscatterData(ADVMData):
+class ProcessedData(ADVMData):
 
     def __init__(self, data_manager, configuration_parameters, processing_parameters):
         """
@@ -434,8 +411,8 @@ class ProcessedADVMBackscatterData(ADVMData):
         :return: 
         """
 
-        if not self._configuration_parameters.is_compatible(other.get_configuration_params()) and \
-                self._processing_parameters.is_compatible(other.get_processing_params()) and \
+        if not self._configuration_parameters.is_compatible(other.get_configuration_parameters()) and \
+                self._processing_parameters.is_compatible(other.get_processing_parameters()) and \
                 isinstance(other, type(self)):
             raise ADVMDataIncompatibleError("ADVM data sets are incompatible")
 
@@ -445,7 +422,7 @@ class ProcessedADVMBackscatterData(ADVMData):
 
         return type(self)(combined_data_manager, self._configuration_parameters, self._processing_parameters)
 
-    def get_processing_params(self):
+    def get_processing_parameters(self):
         """
 
         :return: 
@@ -453,21 +430,92 @@ class ProcessedADVMBackscatterData(ADVMData):
 
         return copy.deepcopy(self._processing_parameters)
 
-    def get_variable_observation(self, variable_name, time, time_window_width=0, match_method='nearest'):
+
+class BackscatterData(ADVMData):
+
+    @abc.abstractmethod
+    def __init__(self):
+
+        super().__init__()
+
+    def _calc_cell_range(self):
+        """Calculate range of cells along a single beam.
+
+        :return: Range of cells along a single beam
         """
 
-        :param variable_name: 
-        :param time: 
-        :param time_window_width: 
-        :param match_method: 
-        :return: 
+        acoustic_data = self._data_manager.get_data()
+
+        blanking_distance = self._configuration_parameters['Blanking Distance']
+        cell_size = self._configuration_parameters['Cell Size']
+        number_of_cells = self._configuration_parameters['Number of Cells']
+
+        first_cell_mid_point = blanking_distance + cell_size / 2
+        last_cell_mid_point = first_cell_mid_point + (number_of_cells - 1) * cell_size
+
+        slant_angle = self._configuration_parameters['Slant Angle']
+
+        cell_range = np.linspace(first_cell_mid_point,
+                                 last_cell_mid_point,
+                                 num=number_of_cells) / np.cos(np.radians(slant_angle))
+
+        cell_range = np.tile(cell_range, (acoustic_data.shape[0], 1))
+
+        col_names = ['R{:03}'.format(cell) for cell in range(1, number_of_cells+1)]
+
+        cell_range_df = pd.DataFrame(data=cell_range, index=acoustic_data.index, columns=col_names)
+
+        return cell_range_df
+
+    def get_cell_range(self):
+        """Get a DataFrame containing the range of cells along a single beam.
+
+        :return: Range of cells along a single beam
         """
 
-        return self._data_manager.get_variable_observation(variable_name, time, time_window_width, match_method)
+        return self._calc_cell_range()
 
 
-class RawADVMBackscatterData(ADVMData):
-    """Class for managing backscatter data"""
+class ProcessedBackscatterData(ProcessedData, BackscatterData):
+
+    @abc.abstractmethod
+    def __init__(self, data_manager, configuration_parameters, processing_parameters):
+
+        self._backscatter_name = None
+
+        super().__init__(data_manager, configuration_parameters, processing_parameters)
+
+    def plot(self, index=None, ax=None):
+
+        data = self.get_data()
+
+        if index is None:
+            index = data.index
+
+        if ax is None:
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
+
+        line_style_creator = LineStyleGenerator()
+
+        cell_range = self.get_cell_range()
+
+        for i in index:
+
+            line_style = line_style_creator.get_line_style(False)
+            marker = line_style_creator.get_marker()
+            color = line_style_creator.get_line_color()
+
+            ax.plot(cell_range.ix[i], data.ix[i], ls=line_style, marker=marker, color=color)
+
+        ax.set_xlabel('Range, in meters')
+        ax.set_ylabel(self._backscatter_name + ', in decibels')
+
+        return ax
+
+
+class RawBackscatterData(BackscatterData):
+    """Class for managing raw backscatter data"""
 
     # regex string to find acoustic backscatter columns
     _abs_columns_regex = r'^(Cell\d{2}(Amp|SNR)\d{1})$'
@@ -850,7 +898,13 @@ class RawADVMBackscatterData(ADVMData):
         return cls(data_manager, configuration_parameters)
 
 
-class MeasuredBackscatterData(ProcessedADVMBackscatterData):
+class MeasuredBackscatterData(ProcessedBackscatterData):
+
+    def __init__(self, data_manager, configuration_parameters, processing_parameters):
+
+        super().__init__(data_manager, configuration_parameters, processing_parameters)
+
+        self._backscatter_name = 'Measured backscatter'
 
     @staticmethod
     def _apply_cell_range_filter(water_corrected_backscatter, cell_range, min_cell_range, max_cell_range):
@@ -1100,8 +1154,16 @@ class MeasuredBackscatterData(ProcessedADVMBackscatterData):
         water_corrected_backscatter_data_manager = datamanager.SurrogateData(water_corrected_backscatter_df,
                                                                              water_corrected_backscatter_origin)
         return WaterCorrectedBackscatterData(water_corrected_backscatter_data_manager,
-                                             self.get_configuration_params(),
-                                             self.get_processing_params())
+                                             self.get_configuration_parameters(),
+                                             self.get_processing_parameters())
+
+    def get_data(self):
+        """
+        
+        :return: 
+        """
+
+        return self.get_measured_backscatter()
 
     def get_measured_backscatter(self):
         """
@@ -1114,7 +1176,13 @@ class MeasuredBackscatterData(ProcessedADVMBackscatterData):
         return data.filter(regex='^MB\d{3}$')
 
 
-class WaterCorrectedBackscatterData(ProcessedADVMBackscatterData):
+class WaterCorrectedBackscatterData(ProcessedBackscatterData):
+
+    def __init__(self, data_manager, configuration_parameters, processing_parameters):
+
+        super().__init__(data_manager, configuration_parameters, processing_parameters)
+
+        self._backscatter_name = 'Water corrected backscatter'
 
     @staticmethod
     def _calc_sediment_attenuation_coefficient(water_corrected_backscatter, cell_range):
@@ -1221,7 +1289,7 @@ class WaterCorrectedBackscatterData(ProcessedADVMBackscatterData):
         data_origin = self._create_origin_from_data_frame(sediment_attenuation_coefficient)
         data_manager = datamanager.SurrogateData(sediment_attenuation_coefficient, data_origin)
 
-        return ProcessedADVMBackscatterData(data_manager, self.get_configuration_params(), self.get_processing_params())
+        return ProcessedData(data_manager, self.get_configuration_parameters(), self.get_processing_parameters())
 
     def calculate_sediment_corrected_backscatter(self):
         """
@@ -1236,8 +1304,16 @@ class WaterCorrectedBackscatterData(ProcessedADVMBackscatterData):
                                                                            sediment_corrected_backscatter_origin)
 
         return SedimentCorrectedBackscatterData(sediment_corrected_backscatter_manager,
-                                                self.get_configuration_params(),
-                                                self.get_processing_params())
+                                                self.get_configuration_parameters(),
+                                                self.get_processing_parameters())
+
+    def get_data(self):
+        """
+        
+        :return: 
+        """
+
+        return self.get_water_corrected_backscatter()
 
     def get_water_corrected_backscatter(self):
 
@@ -1245,7 +1321,13 @@ class WaterCorrectedBackscatterData(ProcessedADVMBackscatterData):
         return data.filter(regex='^WCB\d{3}$')
 
 
-class SedimentCorrectedBackscatterData(ProcessedADVMBackscatterData):
+class SedimentCorrectedBackscatterData(ProcessedBackscatterData):
+
+    def __init__(self, data_manager, configuration_parameters, processing_parameters):
+
+        super().__init__(data_manager, configuration_parameters, processing_parameters)
+
+        self._backscatter_name = 'Sediment corrected backscatter'
 
     def calculate_mean_sediment_corrected_backscatter(self):
         """
@@ -1260,39 +1342,35 @@ class SedimentCorrectedBackscatterData(ProcessedADVMBackscatterData):
         data_origin = self._create_origin_from_data_frame(mean_sediment_corrected_backscatter)
         data_manager = datamanager.SurrogateData(mean_sediment_corrected_backscatter, data_origin)
 
-        return ProcessedADVMBackscatterData(data_manager, self.get_configuration_params(), self.get_processing_params())
+        return ProcessedData(data_manager, self.get_configuration_parameters(), self.get_processing_parameters())
 
 
 class ADVMBackscatterDataProcessor:
 
-    def __init__(self, raw_advm_backscatter_data):
+    def __init__(self, raw_advm_backscatter_data, processing_parameters=None):
         """
         
         :param raw_advm_backscatter_data: 
-        :type raw_advm_backscatter_data: RawADVMBackscatterData
+        :type raw_advm_backscatter_data: RawBackscatterData
         """
 
         self._raw_advm_backscatter_data = copy.deepcopy(raw_advm_backscatter_data)
+
         self._measured_backscatter_data = None
         self._water_corrected_backscatter_data = None
         self._sediment_corrected_backscatter_data = None
 
-    @classmethod
-    def read_argonaut_data(cls, data_directory, filename):
-        """
-        
-        :param data_directory: 
-        :param filename: 
-        :return: 
-        """
+        if processing_parameters is not None:
 
-        raw_advm_backscatter_data = RawADVMBackscatterData.read_argonaut_data(data_directory, filename)
+            self._acoustic_parameters = self.calculate_acoustic_parameters(processing_parameters)
 
-        return cls(raw_advm_backscatter_data)
+        else:
+
+            self._acoustic_parameters = None
 
     def calculate_acoustic_parameters(self, processing_parameters):
         """
-        
+
         :param processing_parameters: 
         :return: 
         """
@@ -1308,6 +1386,40 @@ class ADVMBackscatterDataProcessor:
         mean_sediment_corrected_backscatter = \
             self._sediment_corrected_backscatter_data.calculate_mean_sediment_corrected_backscatter()
 
-        acoustic_parameters = sediment_attenuation_coefficient.add_data(mean_sediment_corrected_backscatter)
+        self._acoustic_parameters = sediment_attenuation_coefficient.add_data(mean_sediment_corrected_backscatter)
 
-        return acoustic_parameters
+        return copy.deepcopy(self._acoustic_parameters)
+
+    def get_acoustic_parameters(self):
+
+        return copy.deepcopy(self._acoustic_parameters)
+
+    def get_configuration_parameters(self):
+
+        return self._raw_advm_backscatter_data.get_configuration_parameters()
+
+    def get_processing_parameters(self):
+
+        if self._measured_backscatter_data is None:
+
+            processing_parameters = None
+
+        else:
+
+            processing_parameters = self._measured_backscatter_data.get_processing_parameters()
+
+        return processing_parameters
+
+    @classmethod
+    def read_argonaut_data(cls, data_directory, filename):
+        """
+        
+        :param data_directory: 
+        :param filename: 
+        :return: 
+        """
+
+        raw_advm_backscatter_data = RawBackscatterData.read_argonaut_data(data_directory, filename)
+
+        return cls(raw_advm_backscatter_data)
+
