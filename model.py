@@ -218,6 +218,16 @@ class RatingModel(abc.ABC):
         ax.set_xlabel(x_label)
         ax.set_ylabel(y_label)
 
+    def _update_model(self):
+        """
+        
+        :return: 
+        
+        """
+
+        self._create_model_dataset()
+        self._create_model()
+
     def exclude_observation(self, observation_time):
         """Exclude observation from the model.
 
@@ -329,7 +339,7 @@ class RatingModel(abc.ABC):
 
         self._response_variable = response_variable
 
-        self.update_model()
+        self._update_model()
 
     def transform_response_variable(self, transform):
         """Transform the response variable.
@@ -347,15 +357,6 @@ class RatingModel(abc.ABC):
     def predict_response_variable(self, **kwargs):
         """Predict the value of the response variable given values for the explanatory variable."""
         pass
-
-    def update_model(self):
-        """Update the regression model.
-
-        :return:
-        """
-
-        self._create_model_dataset()
-        self._create_model()
 
 
 class OLSModel(RatingModel, abc.ABC):
@@ -480,8 +481,6 @@ class OLSModel(RatingModel, abc.ABC):
 
         res = self._model.fit()
 
-        # exog_fit = sm.add_constant(x_fit)
-
         y_fit = self._model.predict(res.params, exog=exog)
 
         u_ci = np.empty(y_fit.shape)
@@ -503,7 +502,7 @@ class OLSModel(RatingModel, abc.ABC):
         return y_fit, l_ci, u_ci
 
     def _get_model_equation(self):
-        """Get a string representation of the model equation with estimated coefficients.
+        """Get a string representation of the model equation.
 
         :return:
         """
@@ -518,6 +517,8 @@ class OLSModel(RatingModel, abc.ABC):
                 explanatory_variables.append(self._float_string_format.format(res.params[variable]) + variable)
 
         response_variable = self._model.endog_names
+
+        # TODO: Correct formula format for negative coefficients (minus)
 
         model_equation = response_variable + ' = ' + ' + '.join(explanatory_variables)
 
@@ -798,7 +799,6 @@ class OLSModel(RatingModel, abc.ABC):
         ax.set_xlabel('Fitted ' + self._model.endog_names)
         ax.set_ylabel('Raw residual')
         plt.sca(ax)
-        # plt.axhline(color='k', axes=ax)
         plt.axhline(color='k')
 
     def _plot_resid_vs_time(self, ax):
@@ -1239,8 +1239,6 @@ class SimpleLinearRatingModel(OLSModel):
         else:
             self.set_explanatory_variable(data_manager.get_variable_names()[1])
 
-        # self.update_model()
-
     def _get_exogenous_matrix(self, exogenous_df):
         """
 
@@ -1415,7 +1413,7 @@ class SimpleLinearRatingModel(OLSModel):
 
         self._check_variable_names([variable])
         self._explanatory_variables = (variable,)
-        self.update_model()
+        self._update_model()
 
     def transform_explanatory_variable(self, transform):
         """
@@ -1448,8 +1446,6 @@ class MultipleLinearRatingModel(OLSModel):
             self.set_explanatory_variables(explanatory_variables)
         else:
             self.set_explanatory_variables(data_manager.get_variable_names()[1:])
-
-        # self.update_model()
 
     def _estimate_explanatory_variable(self, explanatory_variable):
         """
@@ -1629,7 +1625,7 @@ class MultipleLinearRatingModel(OLSModel):
 
         self._explanatory_variables = tuple(variables)
 
-        self.update_model()
+        self._update_model()
 
     def transform_explanatory_variable(self, explanatory_variable, transform):
         """
@@ -1665,8 +1661,6 @@ class ComplexRatingModel(OLSModel):
             self.set_explanatory_variable(explanatory_variable)
         else:
             self.set_explanatory_variable(data_manager.get_variable_names()[1])
-
-        # self.update_model()
 
     def _get_exogenous_matrix(self, exogenous_df):
         """
@@ -1813,7 +1807,7 @@ class ComplexRatingModel(OLSModel):
 
         self._check_variable_names([variable])
         self._explanatory_variables = (variable,)
-        self.update_model()
+        self._update_model()
 
 
 class CompoundRatingModel(RatingModel):
@@ -2136,7 +2130,7 @@ class CompoundRatingModel(RatingModel):
         self._check_variable_names([explanatory_variable])
         self._explanatory_variables = (explanatory_variable,)
 
-        self.update_model()
+        self._update_model()
 
     def transform_response_variable(self, transform):
         """
