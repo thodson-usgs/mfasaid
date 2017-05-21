@@ -1,9 +1,11 @@
+import copy
 from datetime import timedelta
 
 import pandas as pd
 import numpy as np
 
 from datamanager import DataManager
+import model as saidmodel
 
 
 class ConstituentData(DataManager):
@@ -132,3 +134,222 @@ class SurrogateData(DataManager):
                 raise ValueError(msg)
 
         return variable_observation
+
+
+class SurrogateRatingModel:
+
+    def __init__(self, constituent_data, surrogate_data):
+        """
+
+        :param constituent_data: 
+        :type constituent_data: ConstituentData
+        :param surrogate_data: 
+        :type surrogate_data: SurrogateData
+        """
+
+        self._constituent_data = copy.deepcopy(constituent_data)
+        self._surrogate_data = copy.deepcopy(surrogate_data)
+
+        surrogate_variables = self._surrogate_data.get_variable_names()
+        constituent_variables = self._constituent_data.get_variable_names()
+
+        self._surrogate_variables = [surrogate_variables[0]]
+        self._constituent_variable = constituent_variables[0]
+
+        self._surrogate_transform = dict(zip(surrogate_variables, [(None,)]*len(surrogate_variables)))
+        self._constituent_transform = dict(zip(constituent_variables, [None]*len(constituent_variables)))
+
+        self._match_method = dict(zip(surrogate_variables, ['nearest']*len(surrogate_variables)))
+        self._match_time = dict(zip(surrogate_variables, [0]*len(surrogate_variables)))
+
+        self._excluded_observations = pd.DatetimeIndex([])
+
+        self._model = self._create_model()
+
+    def _create_model(self):
+        """
+        
+        :return: 
+        """
+
+        model_data = self._get_model_data()
+
+        if len(self._surrogate_variables) > 1:
+
+            model = saidmodel.MultipleLinearRatingModel(model_data,
+                                                        response_variable=self._constituent_variable,
+                                                        explanatory_variables=self._surrogate_variables)
+
+            for variable in self._surrogate_variables:
+                model.transform_explanatory_variable(variable, self._surrogate_transform[variable[0]])
+
+        else:
+
+            surrogate_variable = self._surrogate_variables[0]
+            surrogate_variable_transform = self._surrogate_transform[surrogate_variable]
+
+            if len(surrogate_variable_transform) > 1:
+                model = saidmodel.ComplexRatingModel(model_data,
+                                                     response_variable=self._constituent_variable,
+                                                     explanatory_variable=surrogate_variable)
+                for transform in surrogate_variable_transform:
+                    model.add_explanatory_var_transform(transform)
+            else:
+                model = saidmodel.SimpleLinearRatingModel(model_data,
+                                                          response_variable=self._constituent_variable,
+                                                          explanatory_variable=surrogate_variable)
+                model.transform_explanatory_variable(surrogate_variable_transform[0])
+
+        model.transform_response_variable(self._constituent_transform[self._constituent_variable])
+        model.exclude_observation(self._excluded_observations)
+
+        return model
+
+    def _get_model_data(self):
+        """
+        
+        :return: 
+        """
+
+        model_data = copy.deepcopy(self._constituent_data)
+
+        for variable in self._surrogate_variables:
+            time_window_width = self._match_time[variable]
+            match_method = self._match_method[variable]
+            model_data = model_data.add_surrogate_data(self._surrogate_data, variable, time_window_width, match_method)
+
+        return model_data
+
+    def add_surrogate_transform(self, surrogate_variable, surrogate_transform):
+        """
+
+        :param surrogate_variable:
+        :param surrogate_transform: 
+        :return: 
+        """
+
+        saidmodel.RatingModel.check_transform(surrogate_transform)
+
+        surrogate_variables = self._surrogate_data.get_variable_names()
+        if surrogate_variable not in surrogate_variables:
+            raise ValueError("Invalid surrogate variable name: {}".format(surrogate_variable))
+
+        self._surrogate_transform[surrogate_variable] = self._surrogate_transform[surrogate_variable] + \
+                                                        (surrogate_transform,)
+
+    def exclude_observations(self, observations):
+        """
+
+        :param observations: 
+        :return: 
+        """
+
+        self._excluded_observations = observations
+        self._model = self._create_model()
+
+    def get_constituent_transform(self):
+        """
+
+        :return: 
+        """
+
+        return self._constituent_transform[self._constituent_variable]
+
+    def get_constituent_variable(self):
+        """
+
+        :return: 
+        """
+
+        return self._constituent_variable
+
+    def get_constituent_variable_names(self):
+        """
+        
+        :return: 
+        """
+
+        return self._constituent_data.get_variable_names()
+
+    def get_surrogate_transform(self):
+        """
+
+        :return: 
+        """
+
+        return {var: self._surrogate_transform[var] for var in self._surrogate_variables}
+
+    def get_surrogate_variable_names(self):
+        """
+        
+        :return: 
+        """
+
+        return self._surrogate_data.get_variable_names()
+
+    def get_surrogate_variables(self):
+        """
+
+        :return: 
+        """
+
+        return copy.deepcopy(self._surrogate_variables)
+
+    def get_model_report(self):
+        """
+
+        :return: 
+        """
+
+        return self._model.get_model_report()
+
+    def plot(self, plot_type):
+        """
+
+        :param plot_type: 
+        :return: 
+        """
+
+    def set_constituent_transform(self, constituent_transform):
+        """
+
+        :param constituent_transform: 
+        :return: 
+        """
+
+        saidmodel.RatingModel.check_transform(constituent_transform)
+        self._constituent_transform = constituent_transform
+        self._model = self._create_model()
+
+    def set_constituent_variable(self, constituent_variable):
+        """
+        
+        :param constituent_variable: 
+        :return: 
+        """
+
+        constituent_variable_names = self.get_constituent_variable_names()
+        if constituent_variable not in constituent_variable_names:
+            raise ValueError("Invalid constituent variable name: {}".format(constituent_variable))
+
+    def set_observation_match_method(self, method, time):
+        """
+
+        :param method: 
+        :param time: 
+        :return: 
+        """
+
+    def set_surrogate_transform(self, surrogate_transform):
+        """
+
+        :param surrogate_transform: 
+        :return: 
+        """
+
+    def set_surrogate_variables(self, surrogate_variables):
+        """
+        
+        :param surrogate_variables: 
+        :return: 
+        """
