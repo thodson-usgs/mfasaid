@@ -112,16 +112,6 @@ class RatingModel(abc.ABC):
             transform_function = self._transform_functions[variable_transform]
             dataset.ix[:, var_transform_name] = transform_function(dataset[variable])
 
-    @classmethod
-    def _check_transform(cls, transform):
-        """
-
-        :param transform:
-        :return:
-        """
-        if transform not in cls._transform_variable_names.keys():
-            raise InvalidVariableTransformError("{} is an unrecognized transformation.".format(transform))
-
     def _check_variable_names(self, variable_names):
         """
 
@@ -227,6 +217,16 @@ class RatingModel(abc.ABC):
 
         self._create_model_dataset()
         self._create_model()
+
+    @classmethod
+    def check_transform(cls, transform):
+        """
+
+        :param transform:
+        :return:
+        """
+        if transform not in cls._transform_variable_names.keys():
+            raise InvalidVariableTransformError("{} is an unrecognized transformation.".format(transform))
 
     def exclude_observation(self, observation_time):
         """Exclude observation from the model.
@@ -348,7 +348,7 @@ class RatingModel(abc.ABC):
         :return:
         """
 
-        self._check_transform(transform)
+        self.check_transform(transform)
         self._variable_transform[self._response_variable] = transform
 
         self._create_model()
@@ -1422,7 +1422,7 @@ class SimpleLinearRatingModel(OLSModel):
         :return:
         """
 
-        self._check_transform(transform)
+        self.check_transform(transform)
         self._variable_transform[self._explanatory_variables[0]] = transform
 
         self._create_model()
@@ -1635,7 +1635,7 @@ class MultipleLinearRatingModel(OLSModel):
         :return:
         """
 
-        self._check_transform(transform)
+        self.check_transform(transform)
         self._check_variable_names([explanatory_variable])
         self._variable_transform[explanatory_variable] = transform
 
@@ -1691,7 +1691,7 @@ class ComplexRatingModel(OLSModel):
         :return:
         """
 
-        self._check_transform(transform)
+        self.check_transform(transform)
 
         self._explanatory_variable_transform.append(transform)
 
@@ -1896,7 +1896,7 @@ class CompoundRatingModel(RatingModel):
         :return:
         """
 
-        self._check_transform(transform)
+        self.check_transform(transform)
 
         if segment:
             self._check_segment_number(segment)
@@ -2139,7 +2139,7 @@ class CompoundRatingModel(RatingModel):
         :return:
         """
 
-        self._check_transform(transform)
+        self.check_transform(transform)
 
         self._variable_transform[self._response_variable] = transform
 
