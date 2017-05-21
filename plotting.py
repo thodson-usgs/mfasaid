@@ -1,3 +1,4 @@
+import matplotlib.colors
 import matplotlib.lines
 import matplotlib.pyplot as plt
 import numpy as np
@@ -53,7 +54,7 @@ class LineStyleGenerator:
     def get_line_properties(self):
 
         line_color = self.get_line_color()
-        line_marker = self.get_line_marker()
+        line_marker = self.get_marker()
         line_style = self.get_line_style()
 
         return line_color, line_style, line_marker
