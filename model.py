@@ -84,8 +84,7 @@ class RatingModel(abc.ABC):
         # initialize the explanatory variables attribute
         self._explanatory_variables = tuple(variable_names[1:])
 
-        # noinspection PyUnresolvedReferences
-        self._excluded_observations = pd.tseries.index.DatetimeIndex([], name='DateTime')
+        self._excluded_observations = pd.DatetimeIndex([], name='DateTime')
         self._model_dataset = pd.DataFrame()
         self._model_data_origin = pd.DataFrame(columns=['variable', 'origin'])
 
@@ -222,7 +221,7 @@ class RatingModel(abc.ABC):
         """Exclude observation from the model.
 
         :param observation_time:
-        :type observation_time: pandas.tseries.index.DatetimeIndex
+        :type observation_time: pandas.DatetimeIndex
         :return:
         """
 
