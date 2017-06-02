@@ -14,7 +14,7 @@ from statsmodels.iolib.tableformatting import fmt_params
 from statsmodels.sandbox.regression.predstd import wls_prediction_std
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 
-import data
+import datamanager
 import stats as saidstats
 
 
@@ -60,11 +60,11 @@ class RatingModel(abc.ABC):
         """Initialize a RatingModel object.
 
         :param data_manager: Data manager containing response and explanatory variables.
-        :type data_manager: data.DataManager
+        :type data_manager: datamanager.DataManager
         :param response_variable:
         """
 
-        if not isinstance(data_manager, data.DataManager):
+        if not isinstance(data_manager, datamanager.DataManager):
             raise TypeError("data_manager must be type data.DataManager")
 
         self._data_manager = data_manager
@@ -84,6 +84,7 @@ class RatingModel(abc.ABC):
         # initialize the explanatory variables attribute
         self._explanatory_variables = tuple(variable_names[1:])
 
+        # noinspection PyUnresolvedReferences
         self._excluded_observations = pd.DatetimeIndex([], name='DateTime')
         self._model_dataset = pd.DataFrame()
         self._model_data_origin = pd.DataFrame(columns=['variable', 'origin'])
@@ -110,16 +111,6 @@ class RatingModel(abc.ABC):
                     self._transform_variable_names[variable_transform].replace('x', variable)
             transform_function = self._transform_functions[variable_transform]
             dataset.ix[:, var_transform_name] = transform_function(dataset[variable])
-
-    @classmethod
-    def _check_transform(cls, transform):
-        """
-
-        :param transform:
-        :return:
-        """
-        if transform not in cls._transform_variable_names.keys():
-            raise InvalidVariableTransformError("{} is an unrecognized transformation.".format(transform))
 
     def _check_variable_names(self, variable_names):
         """
@@ -216,6 +207,26 @@ class RatingModel(abc.ABC):
 
         ax.set_xlabel(x_label)
         ax.set_ylabel(y_label)
+
+    def _update_model(self):
+        """
+        
+        :return: 
+        
+        """
+
+        self._create_model_dataset()
+        self._create_model()
+
+    @classmethod
+    def check_transform(cls, transform):
+        """
+
+        :param transform:
+        :return:
+        """
+        if transform not in cls._transform_variable_names.keys():
+            raise InvalidVariableTransformError("{} is an unrecognized transformation.".format(transform))
 
     def exclude_observation(self, observation_time):
         """Exclude observation from the model.
@@ -328,7 +339,7 @@ class RatingModel(abc.ABC):
 
         self._response_variable = response_variable
 
-        self.update_model()
+        self._update_model()
 
     def transform_response_variable(self, transform):
         """Transform the response variable.
@@ -337,7 +348,7 @@ class RatingModel(abc.ABC):
         :return:
         """
 
-        self._check_transform(transform)
+        self.check_transform(transform)
         self._variable_transform[self._response_variable] = transform
 
         self._create_model()
@@ -346,15 +357,6 @@ class RatingModel(abc.ABC):
     def predict_response_variable(self, **kwargs):
         """Predict the value of the response variable given values for the explanatory variable."""
         pass
-
-    def update_model(self):
-        """Update the regression model.
-
-        :return:
-        """
-
-        self._create_model_dataset()
-        self._create_model()
 
 
 class OLSModel(RatingModel, abc.ABC):
@@ -479,8 +481,6 @@ class OLSModel(RatingModel, abc.ABC):
 
         res = self._model.fit()
 
-        # exog_fit = sm.add_constant(x_fit)
-
         y_fit = self._model.predict(res.params, exog=exog)
 
         u_ci = np.empty(y_fit.shape)
@@ -502,7 +502,7 @@ class OLSModel(RatingModel, abc.ABC):
         return y_fit, l_ci, u_ci
 
     def _get_model_equation(self):
-        """Get a string representation of the model equation with estimated coefficients.
+        """Get a string representation of the model equation.
 
         :return:
         """
@@ -517,6 +517,8 @@ class OLSModel(RatingModel, abc.ABC):
                 explanatory_variables.append(self._float_string_format.format(res.params[variable]) + variable)
 
         response_variable = self._model.endog_names
+
+        # TODO: Correct formula format for negative coefficients (minus)
 
         model_equation = response_variable + ' = ' + ' + '.join(explanatory_variables)
 
@@ -797,7 +799,6 @@ class OLSModel(RatingModel, abc.ABC):
         ax.set_xlabel('Fitted ' + self._model.endog_names)
         ax.set_ylabel('Raw residual')
         plt.sca(ax)
-        # plt.axhline(color='k', axes=ax)
         plt.axhline(color='k')
 
     def _plot_resid_vs_time(self, ax):
@@ -960,7 +961,7 @@ class OLSModel(RatingModel, abc.ABC):
         raw_residuals = res.resid.rename('Raw Residual')
 
         # add estimated response
-        explanatory_data = data.DataManager(self._model_dataset.ix[model_data_index, :], self._model_data_origin)
+        explanatory_data = datamanager.DataManager(self._model_dataset.ix[model_data_index, :], self._model_data_origin)
         predicted_response = self.predict_response_variable(explanatory_data=explanatory_data, bias_correction=True)
         estimated_response = predicted_response[response_variable]
         estimated_response = estimated_response.rename('Estimated ' + response_variable)
@@ -1144,7 +1145,7 @@ class OLSModel(RatingModel, abc.ABC):
         interval is returned.
 
         :param explanatory_data: Data manager containing explanatory variable data
-        :type explanatory_data: data.DataManager
+        :type explanatory_data: datamanager.DataManager
         :param bias_correction: Indicate whether or not to use bias correction
         :type bias_correction: bool
         :param prediction_interval: Indicate whether or not to return a 90% prediction interval
@@ -1237,8 +1238,6 @@ class SimpleLinearRatingModel(OLSModel):
             self.set_explanatory_variable(explanatory_variable)
         else:
             self.set_explanatory_variable(data_manager.get_variable_names()[1])
-
-        # self.update_model()
 
     def _get_exogenous_matrix(self, exogenous_df):
         """
@@ -1414,7 +1413,7 @@ class SimpleLinearRatingModel(OLSModel):
 
         self._check_variable_names([variable])
         self._explanatory_variables = (variable,)
-        self.update_model()
+        self._update_model()
 
     def transform_explanatory_variable(self, transform):
         """
@@ -1423,7 +1422,7 @@ class SimpleLinearRatingModel(OLSModel):
         :return:
         """
 
-        self._check_transform(transform)
+        self.check_transform(transform)
         self._variable_transform[self._explanatory_variables[0]] = transform
 
         self._create_model()
@@ -1447,8 +1446,6 @@ class MultipleLinearRatingModel(OLSModel):
             self.set_explanatory_variables(explanatory_variables)
         else:
             self.set_explanatory_variables(data_manager.get_variable_names()[1:])
-
-        # self.update_model()
 
     def _estimate_explanatory_variable(self, explanatory_variable):
         """
@@ -1628,7 +1625,7 @@ class MultipleLinearRatingModel(OLSModel):
 
         self._explanatory_variables = tuple(variables)
 
-        self.update_model()
+        self._update_model()
 
     def transform_explanatory_variable(self, explanatory_variable, transform):
         """
@@ -1638,7 +1635,7 @@ class MultipleLinearRatingModel(OLSModel):
         :return:
         """
 
-        self._check_transform(transform)
+        self.check_transform(transform)
         self._check_variable_names([explanatory_variable])
         self._variable_transform[explanatory_variable] = transform
 
@@ -1664,8 +1661,6 @@ class ComplexRatingModel(OLSModel):
             self.set_explanatory_variable(explanatory_variable)
         else:
             self.set_explanatory_variable(data_manager.get_variable_names()[1])
-
-        # self.update_model()
 
     def _get_exogenous_matrix(self, exogenous_df):
         """
@@ -1696,7 +1691,7 @@ class ComplexRatingModel(OLSModel):
         :return:
         """
 
-        self._check_transform(transform)
+        self.check_transform(transform)
 
         self._explanatory_variable_transform.append(transform)
 
@@ -1812,7 +1807,7 @@ class ComplexRatingModel(OLSModel):
 
         self._check_variable_names([variable])
         self._explanatory_variables = (variable,)
-        self.update_model()
+        self._update_model()
 
 
 class CompoundRatingModel(RatingModel):
@@ -1867,7 +1862,7 @@ class CompoundRatingModel(RatingModel):
                     origin_data.append([variable, origin])
             model_data_origin = pd.DataFrame(data=origin_data, columns=['variable', 'origin'])
 
-            segment_data_manager = data.DataManager(self._model_dataset.ix[segment_range_index, :], model_data_origin)
+            segment_data_manager = datamanager.DataManager(self._model_dataset.ix[segment_range_index, :], model_data_origin)
 
             segment_model = ComplexRatingModel(segment_data_manager,
                                                response_variable=self.get_response_variable(),
@@ -1901,7 +1896,7 @@ class CompoundRatingModel(RatingModel):
         :return:
         """
 
-        self._check_transform(transform)
+        self.check_transform(transform)
 
         if segment:
             self._check_segment_number(segment)
@@ -2135,7 +2130,7 @@ class CompoundRatingModel(RatingModel):
         self._check_variable_names([explanatory_variable])
         self._explanatory_variables = (explanatory_variable,)
 
-        self.update_model()
+        self._update_model()
 
     def transform_response_variable(self, transform):
         """
@@ -2144,7 +2139,7 @@ class CompoundRatingModel(RatingModel):
         :return:
         """
 
-        self._check_transform(transform)
+        self.check_transform(transform)
 
         self._variable_transform[self._response_variable] = transform
 
@@ -2175,8 +2170,8 @@ class CompoundRatingModel(RatingModel):
             lower_bound = self._breakpoints[i]
             upper_bound = self._breakpoints[i+1]
             segment_index = (lower_bound <= explanatory_series) & (explanatory_series < upper_bound)
-            predictor_data_manager = data.DataManager(explanatory_df.ix[segment_index, :],
-                                                      explanatory_origin)
+            predictor_data_manager = datamanager.DataManager(explanatory_df.ix[segment_index, :],
+                                                             explanatory_origin)
             segment_predicted = self._model[i].predict_response_variable(explanatory_data=predictor_data_manager,
                                                                          bias_correction=bias_correction,
                                                                          prediction_interval=prediction_interval)

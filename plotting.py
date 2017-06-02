@@ -1,10 +1,107 @@
+import matplotlib.colors
+import matplotlib.lines
 import matplotlib.pyplot as plt
 import numpy as np
 
 from datetime import timedelta
 
-import data
+import datamanager
 import stats
+
+
+class LineStyleGenerator:
+
+    def __init__(self):
+
+        self._line_color_iterator = self._create_line_color_iterator()
+        self._line_marker_iterator = self._create_line_marker_iterator()
+        self._line_style_iterator = self._create_line_style_iterator()
+
+    @staticmethod
+    def _create_line_color_iterator():
+
+        base_color_keys = matplotlib.colors.BASE_COLORS.keys()
+        base_color_iterator = iter(base_color_keys)
+
+        return base_color_iterator
+
+    @staticmethod
+    def _create_line_marker_iterator():
+
+        line_marker_keys = matplotlib.lines.lineMarkers.keys()
+        line_marker_iterator = iter(line_marker_keys)
+
+        return line_marker_iterator
+
+    @staticmethod
+    def _create_line_style_iterator():
+
+        line_style_keys = matplotlib.lines.lineStyles.keys()
+        line_style_iterator = iter(line_style_keys)
+
+        return line_style_iterator
+
+    def get_line_color(self):
+
+        try:
+            line_color = next(self._line_color_iterator)
+        except StopIteration:
+            self._line_color_iterator = self._create_line_color_iterator()
+            line_color = self.get_line_color()
+
+        return line_color
+
+    def get_line_properties(self):
+
+        line_color = self.get_line_color()
+        line_marker = self.get_marker()
+        line_style = self.get_line_style()
+
+        return line_color, line_style, line_marker
+
+    def get_line_style(self, draw_nothing=True):
+
+        try:
+            line_style = next(self._line_style_iterator)
+        except StopIteration:
+            self._line_style_iterator = self._create_line_style_iterator()
+            line_style = self.get_line_style()
+
+        line_style_description = matplotlib.lines.lineStyles[line_style]
+
+        if (not draw_nothing) and line_style_description == '_draw_nothing':
+
+            line_style = self.get_line_style(draw_nothing)
+
+        return line_style
+
+    def get_line_style_string(self):
+
+        line_color = self.get_line_color()
+        line_style = self.get_line_style()
+        line_marker = self.get_marker()
+
+        line_style_description = matplotlib.lines.lineStyles[line_style]
+        line_marker_description = matplotlib.lines.lineMarkers[line_marker]
+
+        while line_style_description == '_draw_nothing' and line_marker_description == 'nothing':
+            line_style = self.get_line_style()
+            line_style_description = matplotlib.lines.lineStyles[line_style]
+
+        line_style_string = line_color + line_style + line_marker
+        line_style_string = line_style_string.replace('None', '')
+
+        return line_style_string
+
+    def get_marker(self):
+
+        try:
+            line_marker = next(self._line_marker_iterator)
+        except StopIteration:
+            self._line_marker_iterator = self._create_line_marker_iterator()
+            line_marker = self.get_marker()
+
+        return line_marker
 
 
 class AcousticProfilePlotCreator:
@@ -168,7 +265,7 @@ class SurrogateModelPlotCreator:
 
         self._surrogate_data_manager = model_data_manager.get_surrogate_data_manager()
 
-        if not isinstance(self._surrogate_data_manager, data.SurrogateData):
+        if not isinstance(self._surrogate_data_manager, datamanager.SurrogateData):
             raise TypeError("Rating model data manager must have an associated surrogate data manager.")
 
     def _plot_constituent_time_series(self, ax):

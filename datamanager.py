@@ -1,32 +1,7 @@
-from datetime import timedelta
-from numbers import Number
+import copy
 
 import pandas as pd
 import numpy as np
-
-"""Module containing classes to handle data within the SAID library.
-
-
-Exceptions:
-
-DataException: Base class for exceptions within this module.
-
-ADVMDataIncompatibleError: An error if ADVMData instance are incompatible
-
-DataOriginError: An error if origin information is inconsistent with the data at Data subclass initialization
-
-ConcurrentObservationError: An error if concurrent observations exist for a single variable.
-
-
-Classes:
-
-DataManager: Base class for data subclasses.
-
-ConstituentData: Base class to manage constituent data.
-
-SurrogateData: Data manager class for surrogate data.
-
-"""
 
 
 class DataException(Exception):
@@ -50,7 +25,7 @@ class DataManager:
     This class provides methods for data management subclasses.
     """
 
-    def __init__(self, data, data_origin):
+    def __init__(self, data, data_origin=None):
         """Initialize a Data object.
 
         data_origin must be a DataFrame that describes the origin of all columns in the data parameter. At least one
@@ -62,18 +37,29 @@ class DataManager:
             0           Q   Q_ILR_WY2016.txt
             1           Q   Q_ILR_WY2017.txt
             2          GH   Q_ILR_WY2017.txt
-            3   Turbidity        TurbILR.txt
+            3   Turbidity   TurbILR.txt
 
         :param data: Pandas DataFrame with time DatetimeIndex index type.
         :type data: pd.DataFrame
-        :param data_path: Pandas DataFrame containing variable origin information.
-        :type data_path: pd.DataFrame
+        :param data_origin: Pandas DataFrame containing variable origin information.
+        :type data_origin: pd.DataFrame
         """
+
+        if data_origin is None:
+            data_origin = self._create_empty_origin(data)
 
         self._check_origin(data, data_origin)
 
         self._data = data.copy(deep=True)
         self._data_origin = data_origin.copy(deep=True)
+
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v, in self.__dict__.items():
+            setattr(result, k, copy.deepcopy(v, memo))
+        return result
 
     def _check_for_concurrent_obs(self, other):
         """Check other DataManager for concurrent observations of a variable. Raise ConcurrentObservationError if
@@ -147,6 +133,17 @@ class DataManager:
 
         if variable_name not in self.get_variable_names():
             raise ValueError('{} is not a valid variable name'.format(variable_name), variable_name)
+
+    @classmethod
+    def _create_empty_origin(cls, data):
+        """
+        
+        :return: 
+        """
+
+        origin = cls.create_data_origin(data, np.NaN)
+
+        return origin
 
     @staticmethod
     def _load_tab_delimited_data(file_path):
@@ -243,14 +240,30 @@ class DataManager:
 
                 combined_df.ix[new_df.index, variable] = new_df[variable]
 
-        self._data = combined_df.apply(pd.to_numeric, args=('coerce', ))
+        combined_df = combined_df.apply(pd.to_numeric, args=('ignore', ))
 
-        # combine the variable origin data
-        self._data_origin = self._data_origin.append(other._data_origin)
-        self._data_origin.drop_duplicates(inplace=True)
-        self._data_origin.reset_index(drop=True, inplace=True)
+        data_origin = self._data_origin.copy(deep=True)
+        combined_data_origin = data_origin.append(other._data_origin)
+        combined_data_origin.drop_duplicates(inplace=True)
+        combined_data_origin.reset_index(drop=True, inplace=True)
 
-    def drop_variable(self, variable_names):
+        return type(self)(combined_df, combined_data_origin)
+
+    @staticmethod
+    def create_data_origin(data_df, data_path):
+        """
+
+        :param data_df: 
+        :param data_path: 
+        :return: 
+        """
+
+        acoustic_variables = list(data_df)
+        data = [[variable, data_path] for variable in acoustic_variables]
+        data_origin = pd.DataFrame(data=data, columns=['variable', 'origin'])
+        return data_origin
+
+    def drop_variables(self, variable_names):
         """
 
         :param variable_names: list-like parameter containing names of variables to drop
@@ -258,13 +271,18 @@ class DataManager:
         """
 
         # drop the columns containing the variables
-        self._data.drop(variable_names, axis=1, errors='ignore', inplace=True)
+        data = self._data.copy(deep=True)
+        data.drop(variable_names, axis=1, errors='ignore', inplace=True)
+
+        data_origin = self._data_origin.copy(deep=True)
 
         # drop the variable origin information
         for variable in variable_names:
 
-            variable_row = self._data_origin['variable'] == variable
-            self._data_origin = self._data_origin[~variable_row]
+            variable_row = data_origin['variable'] == variable
+            data_origin = data_origin[~variable_row]
+
+        return type(self)(data, data_origin)
 
     def get_data(self):
         """Return a copy of the time series data contained within the manager.
@@ -363,268 +381,3 @@ class DataManager:
         data_origin = pd.DataFrame(data=origin, columns=['variable', 'origin'])
 
         return cls(tab_delimited_df, data_origin)
-
-
-class ConstituentData(DataManager):
-    """Data manager class for constituent data"""
-
-    def __init__(self, data, data_origin, surrogate_data=None):
-        """
-
-        :param data:
-        :param data_origin:
-        """
-        super().__init__(data, data_origin)
-
-        self._constituent_data = data
-
-        self._surrogate_variable_avg_window = {}
-        self._surrogate_variable_match_method = {}
-        self._surrogate_max_abs_time_diff = {}
-        self._surrogate_data = None
-
-        if surrogate_data:
-            self.add_surrogate_data(surrogate_data)
-
-    def _check_surrogate_variable_name(self, variable_name):
-        """
-
-        :param variable_name:
-        :return:
-        """
-
-        if variable_name not in self._surrogate_data.get_variable_names():
-            raise ValueError("{} is an invalid surrogate variable name".format(variable_name))
-
-    def add_surrogate_data(self, surrogate_data, keep_curr_obs=None):
-        """Add surrogate data observations.
-
-        :param surrogate_data: Surrogate data manager
-        :type surrogate_data: SurrogateData
-        :param keep_curr_obs:
-        :return:
-        """
-
-        # surrogate_data must be a subclass of SurrogateData
-        if not isinstance(surrogate_data, SurrogateData):
-            raise TypeError("surrogate_data must be a subclass of data.SurrogateData")
-
-        # add the surrogate data
-        if self._surrogate_data:
-            self._surrogate_data.add_data(surrogate_data, keep_curr_obs)
-        else:
-            self._surrogate_data = surrogate_data
-
-        # remove variables from the surrogate data set that are in the constituent data set
-        self._surrogate_data.drop_variable(self._constituent_data.keys())
-
-        # update the surrogate data averaging and max windows
-        for variable in self._surrogate_data.get_variable_names():
-            if variable not in self._surrogate_variable_avg_window.keys():
-                self._surrogate_variable_match_method[variable] = 'average'
-                self._surrogate_variable_avg_window[variable] = 0
-                self._surrogate_max_abs_time_diff[variable] = 0
-
-        # update the dataset
-        self.update_data()
-
-    def get_surrogate_avg_window(self, surrogate_variable_name):
-        """
-
-        :param surrogate_variable_name:
-        :return:
-        """
-
-        return self._surrogate_variable_avg_window[surrogate_variable_name]
-
-    def get_surrogate_data_manager(self):
-        """Returns the surrogate data manager instance.
-
-        :return:
-        """
-
-        return self._surrogate_data
-
-    def get_surrogate_match_method(self, surrogate_variable_name):
-        """
-
-        :param surrogate_variable_name:
-        :return:
-        """
-
-        self._check_surrogate_variable_name(surrogate_variable_name)
-
-        return self._surrogate_variable_match_method[surrogate_variable_name]
-
-    def get_surrogate_max_abs_time_diff(self, surrogate_variable_name):
-        """
-
-        :param surrogate_variable_name:
-        :return:
-        """
-
-        self._check_surrogate_variable_name(surrogate_variable_name)
-
-        return self._surrogate_max_abs_time_diff[surrogate_variable_name]
-
-    def set_surrogate_avg_window(self, surrogate_variable_name, avg_window):
-        """Set the surrogate variable averaging window.
-
-        :param surrogate_variable_name:
-        :param avg_window:
-        :return:
-        """
-
-        if not isinstance(avg_window, Number):
-            raise TypeError("avg_window must be type Number")
-
-        self._check_surrogate_variable_name(surrogate_variable_name)
-        self._surrogate_variable_avg_window[surrogate_variable_name] = avg_window
-        self.update_data()
-
-    def set_surrogate_match_method(self, surrogate_variable_name, method):
-        """
-
-        :param surrogate_variable_name:
-        :param method: 'average' or 'closest'
-        :return:
-        """
-
-        if method != 'average' and method != 'closest':
-            raise ValueError('method must be average or closest')
-
-        self._check_surrogate_variable_name(surrogate_variable_name)
-        self._surrogate_variable_match_method[surrogate_variable_name] = method
-        self.update_data()
-
-    def set_surrogate_max_abs_time_diff(self, surrogate_variable_name, time_window):
-        """
-
-        :param surrogate_variable_name:
-        :param time_window:
-        :return:
-        """
-
-        if not isinstance(time_window, Number):
-            raise TypeError("time_window must be type Number")
-
-        self._check_surrogate_variable_name(surrogate_variable_name)
-        self._surrogate_max_abs_time_diff[surrogate_variable_name] = time_window
-        self.update_data()
-
-    def update_data(self):
-        """Update the data set.
-
-        Call when changes to the surrogate data set have been made.
-
-        :return: None
-        """
-
-        if self._surrogate_data:
-
-            # initialize data for a DataManager
-            matched_surrogate_data = \
-                pd.DataFrame(index=self._data.index, columns=self._surrogate_data.get_variable_names())
-            surrogate_variable_origin_data = []
-
-            # iterate over all variables
-            for variable in self._surrogate_data.get_variable_names():
-
-                match_method = self._surrogate_variable_match_method[variable]
-
-                # iterate over all times in constituent data set
-                for index, _ in matched_surrogate_data.iterrows():
-
-                    # average matching
-                    if match_method == 'average':
-                        avg_window = self._surrogate_variable_avg_window[variable]
-                        surrogate_value = self._surrogate_data.get_avg_variable_observation(variable, index, avg_window)
-
-                    # closest-in-time matching
-                    else:
-
-                        # get the closest-in-time surrogate observation
-                        closest_surrogate_obs = \
-                            self._surrogate_data.get_closest_variable_observation(variable, index)
-                        closest_surrogate_obs = closest_surrogate_obs.ix[0]
-                        max_time = timedelta(minutes=self._surrogate_max_abs_time_diff[variable])
-
-                        # match the surrogate observation if the time is within the window
-                        abs_time_diff = np.abs(closest_surrogate_obs.name - index)
-                        if abs_time_diff < max_time:
-                            surrogate_value = closest_surrogate_obs.as_matrix()[0]
-                        else:
-                            surrogate_value = np.NaN
-
-                    matched_surrogate_data.ix[index, variable] = surrogate_value
-
-                for origin in self._surrogate_data.get_variable_origin(variable):
-                    surrogate_variable_origin_data.append([variable, origin])
-
-            # create origin DataFrame
-            surrogate_variable_origin = \
-                pd.DataFrame(data=surrogate_variable_origin_data, columns=['variable', 'origin'])
-
-            # create data manager for new data
-            data_manager = DataManager(matched_surrogate_data, surrogate_variable_origin)
-
-            self.add_data(data_manager, keep_curr_obs=False)
-
-
-class SurrogateData(DataManager):
-    """Data manager class for surrogate data"""
-
-    def __init__(self, data, data_origin):
-        """
-
-        :param data:
-        :param data_origin:
-        """
-
-        super().__init__(data, data_origin)
-
-    def get_avg_variable_observation(self, variable_name, time, avg_window):
-        """For a given variable, get an average value from observations around a given time within a given window.
-
-        :param variable_name: Variable name
-        :type variable_name: str
-        :param time: Center of averaging window
-        :type time: pandas.tslib.Timestamp
-        :param avg_window: Width of half of averaging window, in minutes
-        :type avg_window: Number
-        :return: Averaged value
-        :return type: numpy.float
-        """
-
-        self._check_variable_name(variable_name)
-
-        variable = self.get_variable(variable_name)
-
-        time_diff = timedelta(minutes=avg_window)
-
-        beginning_time = time - time_diff
-        ending_time = time + time_diff
-
-        time_window = (beginning_time < variable.index) & (variable.index <= ending_time)
-
-        variable_observation = np.float(variable.ix[time_window].mean())
-
-        return variable_observation
-
-    def get_closest_variable_observation(self, variable_name, time):
-        """
-
-        :param variable_name:
-        :param time:
-        :return:
-        """
-
-        self._check_variable_name(variable_name)
-
-        variable = self.get_variable(variable_name)
-
-        absolute_time_difference = np.abs(variable.index - time)
-
-        min_abs_time_diff_index = absolute_time_difference.min() == absolute_time_difference
-
-        return variable.ix[min_abs_time_diff_index]
