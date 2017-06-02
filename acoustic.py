@@ -1,5 +1,6 @@
 import abc
 import copy
+from datetime import timedelta
 import linecache
 import os
 import re
@@ -9,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 import datamanager
+import surrogatemodel
 from plotting import LineStyleGenerator
 
 
@@ -52,6 +54,9 @@ class ADVMParam(abc.ABC):
         """
         return self._dict[key]
 
+    def __repr__(self):
+        return self._dict.__repr__()
+
     def __setitem__(self, key, value):
         """Set the requested parameter value.
 
@@ -62,6 +67,9 @@ class ADVMParam(abc.ABC):
 
         self._check_value(key, value)
         self._dict[key] = value
+
+    def __str__(self):
+        return self._dict.__str__()
 
     @abc.abstractmethod
     def _check_value(self, key, value):
@@ -393,7 +401,7 @@ class ProcessedData(ADVMData):
         :param processing_parameters: ADVMProcParam
         """
 
-        assert isinstance(data_manager, datamanager.SurrogateData)
+        assert isinstance(data_manager, surrogatemodel.SurrogateData)
         assert isinstance(configuration_parameters, ADVMConfigParam)
         assert isinstance(processing_parameters, ADVMProcParam)
 
@@ -768,7 +776,7 @@ class RawBackscatterData(BackscatterData):
         """
 
         # test compatibility of other data set
-        if not self._configuration_parameters.is_compatible(other.get_config_params()) and \
+        if not self._configuration_parameters.is_compatible(other.get_configuration_parameters()) and \
                 isinstance(other, type(self)):
 
             raise ADVMDataIncompatibleError("ADVM data sets are incompatible")
@@ -799,7 +807,8 @@ class RawBackscatterData(BackscatterData):
 
         measured_backscatter_origin = self._create_origin_from_data_frame(measured_backscatter_data)
 
-        measured_backscatter_manager = datamanager.SurrogateData(measured_backscatter_data, measured_backscatter_origin)
+        measured_backscatter_manager = surrogatemodel.SurrogateData(measured_backscatter_data,
+                                                                    measured_backscatter_origin)
 
         return MeasuredBackscatterData(measured_backscatter_manager,
                                        self._configuration_parameters,
@@ -829,14 +838,6 @@ class RawBackscatterData(BackscatterData):
             return None
         else:
             return advm_columns
-
-    def get_config_params(self):
-        """Return the configuration parameters.
-
-        :return: ADVMConfigParam containing configuration parameters
-        """
-
-        return copy.deepcopy(self._configuration_parameters)
 
     @classmethod
     def read_argonaut_data(cls, data_directory, filename):
@@ -1148,8 +1149,8 @@ class MeasuredBackscatterData(ProcessedBackscatterData):
 
         water_corrected_backscatter_df = self._calc_water_corrected_backscatter()
         water_corrected_backscatter_origin = self._create_origin_from_data_frame(water_corrected_backscatter_df)
-        water_corrected_backscatter_data_manager = datamanager.SurrogateData(water_corrected_backscatter_df,
-                                                                             water_corrected_backscatter_origin)
+        water_corrected_backscatter_data_manager = surrogatemodel.SurrogateData(water_corrected_backscatter_df,
+                                                                                water_corrected_backscatter_origin)
         return WaterCorrectedBackscatterData(water_corrected_backscatter_data_manager,
                                              self.get_configuration_parameters(),
                                              self.get_processing_parameters())
@@ -1284,7 +1285,7 @@ class WaterCorrectedBackscatterData(ProcessedBackscatterData):
         sediment_attenuation_coefficient = self._calc_sediment_attenuation_coefficient(water_corrected_backscatter,
                                                                                        cell_range)
         data_origin = self._create_origin_from_data_frame(sediment_attenuation_coefficient)
-        data_manager = datamanager.SurrogateData(sediment_attenuation_coefficient, data_origin)
+        data_manager = surrogatemodel.SurrogateData(sediment_attenuation_coefficient, data_origin)
 
         return ProcessedData(data_manager, self.get_configuration_parameters(), self.get_processing_parameters())
 
@@ -1297,7 +1298,7 @@ class WaterCorrectedBackscatterData(ProcessedBackscatterData):
         sediment_corrected_backscatter_df = self._calc_sediment_corrected_backscatter()
         sediment_corrected_backscatter_origin = self._create_origin_from_data_frame(sediment_corrected_backscatter_df)
 
-        sediment_corrected_backscatter_manager = datamanager.SurrogateData(sediment_corrected_backscatter_df,
+        sediment_corrected_backscatter_manager = surrogatemodel.SurrogateData(sediment_corrected_backscatter_df,
                                                                            sediment_corrected_backscatter_origin)
 
         return SedimentCorrectedBackscatterData(sediment_corrected_backscatter_manager,
@@ -1337,7 +1338,7 @@ class SedimentCorrectedBackscatterData(ProcessedBackscatterData):
         mean_sediment_corrected_backscatter = pd.DataFrame(sediment_corrected_backscatter.mean(axis=1),
                                                            columns=['MeanSCB'], dtype=np.float)
         data_origin = self._create_origin_from_data_frame(mean_sediment_corrected_backscatter)
-        data_manager = datamanager.SurrogateData(mean_sediment_corrected_backscatter, data_origin)
+        data_manager = surrogatemodel.SurrogateData(mean_sediment_corrected_backscatter, data_origin)
 
         return ProcessedData(data_manager, self.get_configuration_parameters(), self.get_processing_parameters())
 
@@ -1395,6 +1396,14 @@ class ADVMBackscatterDataProcessor:
 
         return self._raw_advm_backscatter_data.get_configuration_parameters()
 
+    def get_data(self):
+        """
+
+        :return:
+        """
+
+        return self._acoustic_parameters.get_data()
+
     def get_processing_parameters(self):
 
         if self._measured_backscatter_data is None:
@@ -1406,6 +1415,53 @@ class ADVMBackscatterDataProcessor:
             processing_parameters = self._measured_backscatter_data.get_processing_parameters()
 
         return processing_parameters
+
+    def get_variable(self, variable_name):
+        """
+
+        :param variable_name:
+        :return:
+        """
+
+        return self._acoustic_parameters.get_variable(variable_name)
+
+    def get_variable_names(self):
+        """
+
+        :return:
+        """
+
+        if self._acoustic_parameters is None:
+            return None
+        else:
+            return self._acoustic_parameters.get_variable_names()
+
+    def get_variable_observation(self, variable_name, time, time_window_width=0, match_method='nearest'):
+        """
+
+        :param variable_name:
+        :param time:
+        :param time_window_width:
+        :param match_method:
+        :return:
+        """
+
+        if self._acoustic_parameters is None:
+            return None
+        else:
+            return self._acoustic_parameters.get_variable_observation(variable_name, time,
+                                                                      time_window_width, match_method)
+
+    def get_variable_origin(self, variable_name):
+        """
+
+        :return:
+        """
+
+        if self._acoustic_parameters is None:
+            return None
+        else:
+            return self._acoustic_parameters.get_variable_origin(variable_name)
 
     def plot(self, index):
         """
@@ -1444,3 +1500,50 @@ class ADVMBackscatterDataProcessor:
 
         return cls(raw_advm_backscatter_data)
 
+
+class BackscatterRatingModel(surrogatemodel.SurrogateRatingModel):
+
+    def __init__(self, constituent_data, acoustic_data, **kwargs):
+        """
+
+        :param constituent_data:
+        :type constituent_data: datamanager.ConstituentData
+        :param acoustic_data:
+        :type acoustic_data: ADVMBackscatterDataProcessor
+        :param kwargs:
+        """
+
+        super().__init__(constituent_data, acoustic_data, **kwargs)
+
+    def plot_backscatter_profiles(self, observation_numbers=None):
+        """
+
+        :param observation_numbers:
+        :return:
+        """
+
+        model_dataset = self._model.get_model_dataset()
+
+        if observation_numbers is None:
+
+            index = model_dataset.index
+
+        else:
+
+            included_observations = ~(model_dataset['Missing'] | model_dataset['Excluded'])
+            index = model_dataset.index[observation_numbers]
+            index = index[included_observations]
+
+        acoustic_data_index = self._surrogate_data.get_data().index
+        match_time = self._match_time[self._surrogate_variables[0]]
+        time_diff = timedelta(minutes=match_time/2.)
+
+        plot_index = pd.DatetimeIndex([])
+
+        for datetime in index:
+
+            nearest_ix = acoustic_data_index.get_loc(datetime, method='nearest', tolerance=time_diff)
+            nearest_time = acoustic_data_index[nearest_ix]
+            plot_index = plot_index.append((pd.DatetimeIndex([nearest_time])))
+
+        return self._surrogate_data.plot(plot_index)
