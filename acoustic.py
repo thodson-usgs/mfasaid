@@ -1503,18 +1503,6 @@ class ADVMBackscatterDataProcessor:
 
 class BackscatterRatingModel(surrogatemodel.SurrogateRatingModel):
 
-    def __init__(self, constituent_data, acoustic_data, **kwargs):
-        """
-
-        :param constituent_data:
-        :type constituent_data: datamanager.DataManager
-        :param acoustic_data:
-        :type acoustic_data: ADVMBackscatterDataProcessor
-        :param kwargs:
-        """
-
-        super().__init__(constituent_data, acoustic_data, **kwargs)
-
     def plot_backscatter_profiles(self, observation_numbers=None):
         """
 
