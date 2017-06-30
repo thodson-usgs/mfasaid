@@ -1,4 +1,5 @@
 import copy
+from datetime import timedelta
 
 import pandas as pd
 import numpy as np
@@ -322,26 +323,52 @@ class DataManager:
         """
         return list(self._data.keys())
 
-    def get_variable_observation(self, variable_name, time):
-        """Return the value for the observation value of the given variable at the given time.
+    def get_variable_observation(self, variable_name, time, time_window_width=0, match_method='nearest'):
+        """
 
-        :param variable_name: Name of variable.
-        :type variable_name: str
-        :param time: Time
-        :type time: pandas.tslib.Timestamp
-        :return: variable_observation
-        :return type: numpy.float64
+        :param variable_name:
+        :param time:
+        :param time_window_width:
+        :param match_method:
+        :return:
         """
 
         self._check_variable_name(variable_name)
 
-        try:
-            variable_observation = self._data.ix[time, variable_name]
-        except KeyError as err:
-            if err.args[0] == time:
-                variable_observation = None
+        # if the default values, use superclass behavior
+        if time_window_width == 0 and match_method == 'nearest':
+            try:
+                variable_observation = self._data.ix[time, variable_name]
+            except KeyError as err:
+                if err.args[0] == time:
+                    variable_observation = None
+                else:
+                    raise err
+
+        else:
+
+            variable = self.get_variable(variable_name)
+
+            # get the subset of times with the variable
+            time_diff = timedelta(minutes=time_window_width / 2.)
+
+            # match the nearest-in-time observation
+            if match_method == 'nearest':
+                nearest_index = variable.index.get_loc(time, method='nearest', tolerance=time_diff)
+                nearest_observation = variable.ix[nearest_index]
+                variable_observation = nearest_observation.as_matrix()[0]
+
+            # get the mean observation
+            elif match_method == 'mean':
+                beginning_time = time - time_diff
+                ending_time = time + time_diff
+                time_window = (beginning_time < variable.index) & (variable.index <= ending_time)
+                variable_near_time = variable.ix[time_window]
+                variable_observation = variable_near_time.mean()
+
             else:
-                raise err
+                msg = 'Unrecognized keyword value for match_method: {}'.format(match_method)
+                raise ValueError(msg)
 
         return variable_observation
 
@@ -361,6 +388,53 @@ class DataManager:
         variable_origin = list(variable_group['origin'])
 
         return variable_origin
+
+    def match_data(self, surrogate_data, variable_name=None, time_window_width=0, match_method='nearest'):
+        """
+
+        :param surrogate_data:
+        :param variable_name:
+        :param time_window_width:
+        :param match_method:
+        :return:
+        """
+
+        # initialize data for a DataManager
+        matched_surrogate_data = pd.DataFrame(index=self._data.index)
+        surrogate_variable_origin_data = []
+
+        if variable_name is None:
+            variable_names = surrogate_data.get_variable_names()
+        else:
+            variable_names = [variable_name]
+
+        for variable in variable_names:
+
+            # skip adding the variable if it's in the constituent data set
+            if variable in self.get_variable_names():
+                continue
+
+            # iterate through all rows and add the matched surrogate observation
+            variable_series = pd.Series(index=matched_surrogate_data.index, name=variable)
+            for index, _ in matched_surrogate_data.iterrows():
+                observation_value = surrogate_data.get_variable_observation(variable, index,
+                                                                            time_window_width=time_window_width,
+                                                                            match_method=match_method)
+                variable_series[index] = observation_value
+
+            # add the origins of the variable to the origin data list
+            for origin in surrogate_data.get_variable_origin(variable):
+                surrogate_variable_origin_data.append([variable, origin])
+
+            # add the matched variable series to the dataframe
+            matched_surrogate_data[variable] = variable_series
+
+        # create a data manager
+        surrogate_variable_origin = pd.DataFrame(data=surrogate_variable_origin_data, columns=['variable', 'origin'])
+        matched_surrogate_data_manager = DataManager(matched_surrogate_data, surrogate_variable_origin)
+
+        # add the matched surrogate data manager to the constituent data manager
+        return self.add_data(matched_surrogate_data_manager)
 
     @classmethod
     def read_tab_delimited_data(cls, file_path):
