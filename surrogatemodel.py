@@ -51,9 +51,9 @@ class SurrogateRatingModel:
 
         if len(self._surrogate_variables) > 1:
 
-            model = saidmodel.MultipleLinearRatingModel(model_data,
-                                                        response_variable=self._constituent_variable,
-                                                        explanatory_variables=self._surrogate_variables)
+            model = saidmodel.MultipleLinearOLSModel(model_data,
+                                                     response_variable=self._constituent_variable,
+                                                     explanatory_variables=self._surrogate_variables)
 
             for variable in self._surrogate_variables:
                 model.transform_explanatory_variable(variable, self._surrogate_transform[variable[0]])
@@ -64,15 +64,15 @@ class SurrogateRatingModel:
             surrogate_variable_transform = self._surrogate_transform[surrogate_variable]
 
             if len(surrogate_variable_transform) > 1:
-                model = saidmodel.ComplexRatingModel(model_data,
-                                                     response_variable=self._constituent_variable,
-                                                     explanatory_variable=surrogate_variable)
+                model = saidmodel.ComplexOLSModel(model_data,
+                                                  response_variable=self._constituent_variable,
+                                                  explanatory_variable=surrogate_variable)
                 for transform in surrogate_variable_transform:
                     model.add_explanatory_var_transform(transform)
             else:
-                model = saidmodel.SimpleLinearRatingModel(model_data,
-                                                          response_variable=self._constituent_variable,
-                                                          explanatory_variable=surrogate_variable)
+                model = saidmodel.SimpleLinearOLSModel(model_data,
+                                                       response_variable=self._constituent_variable,
+                                                       explanatory_variable=surrogate_variable)
                 model.transform_explanatory_variable(surrogate_variable_transform[0])
 
         model.transform_response_variable(self._constituent_transform[self._constituent_variable])
