@@ -1221,7 +1221,7 @@ class OLSModel(RatingModel, abc.ABC):
         return predicted
 
 
-class SimpleLinearRatingModel(OLSModel):
+class SimpleLinearOLSModel(OLSModel):
     """Class for OLS simple linear regression (SLR) ratings."""
 
     def __init__(self, data_manager, response_variable=None, explanatory_variable=None):
@@ -1428,7 +1428,7 @@ class SimpleLinearRatingModel(OLSModel):
         self._create_model()
 
 
-class MultipleLinearRatingModel(OLSModel):
+class MultipleLinearOLSModel(OLSModel):
     """"""
 
     def __init__(self, data_manager, response_variable=None, explanatory_variables=None):
@@ -1642,7 +1642,7 @@ class MultipleLinearRatingModel(OLSModel):
         self._create_model()
 
 
-class ComplexRatingModel(OLSModel):
+class ComplexOLSModel(OLSModel):
     """"""
 
     def __init__(self, data_manager, response_variable=None, explanatory_variable=None):
@@ -1864,9 +1864,9 @@ class CompoundRatingModel(RatingModel):
 
             segment_data_manager = datamanager.DataManager(self._model_dataset.ix[segment_range_index, :], model_data_origin)
 
-            segment_model = ComplexRatingModel(segment_data_manager,
-                                               response_variable=self.get_response_variable(),
-                                               explanatory_variable=self.get_explanatory_variable())
+            segment_model = ComplexOLSModel(segment_data_manager,
+                                            response_variable=self.get_response_variable(),
+                                            explanatory_variable=self.get_explanatory_variable())
             segment_model.exclude_observation(self.get_excluded_observations())
             segment_model.transform_response_variable(self._variable_transform[self._response_variable])
 

@@ -396,12 +396,12 @@ class ProcessedData(ADVMData):
     def __init__(self, data_manager, configuration_parameters, processing_parameters):
         """
 
-        :param data_manager: SurrogateData
+        :param data_manager: DataManager
         :param configuration_parameters: ADVMConfigParam
         :param processing_parameters: ADVMProcParam
         """
 
-        assert isinstance(data_manager, surrogatemodel.SurrogateData)
+        assert isinstance(data_manager, datamanager.DataManager)
         assert isinstance(configuration_parameters, ADVMConfigParam)
         assert isinstance(processing_parameters, ADVMProcParam)
 
@@ -807,8 +807,8 @@ class RawBackscatterData(BackscatterData):
 
         measured_backscatter_origin = self._create_origin_from_data_frame(measured_backscatter_data)
 
-        measured_backscatter_manager = surrogatemodel.SurrogateData(measured_backscatter_data,
-                                                                    measured_backscatter_origin)
+        measured_backscatter_manager = datamanager.DataManager(measured_backscatter_data,
+                                                               measured_backscatter_origin)
 
         return MeasuredBackscatterData(measured_backscatter_manager,
                                        self._configuration_parameters,
@@ -1149,8 +1149,8 @@ class MeasuredBackscatterData(ProcessedBackscatterData):
 
         water_corrected_backscatter_df = self._calc_water_corrected_backscatter()
         water_corrected_backscatter_origin = self._create_origin_from_data_frame(water_corrected_backscatter_df)
-        water_corrected_backscatter_data_manager = surrogatemodel.SurrogateData(water_corrected_backscatter_df,
-                                                                                water_corrected_backscatter_origin)
+        water_corrected_backscatter_data_manager = datamanager.DataManager(water_corrected_backscatter_df,
+                                                                           water_corrected_backscatter_origin)
         return WaterCorrectedBackscatterData(water_corrected_backscatter_data_manager,
                                              self.get_configuration_parameters(),
                                              self.get_processing_parameters())
@@ -1285,7 +1285,7 @@ class WaterCorrectedBackscatterData(ProcessedBackscatterData):
         sediment_attenuation_coefficient = self._calc_sediment_attenuation_coefficient(water_corrected_backscatter,
                                                                                        cell_range)
         data_origin = self._create_origin_from_data_frame(sediment_attenuation_coefficient)
-        data_manager = surrogatemodel.SurrogateData(sediment_attenuation_coefficient, data_origin)
+        data_manager = datamanager.DataManager(sediment_attenuation_coefficient, data_origin)
 
         return ProcessedData(data_manager, self.get_configuration_parameters(), self.get_processing_parameters())
 
@@ -1298,8 +1298,8 @@ class WaterCorrectedBackscatterData(ProcessedBackscatterData):
         sediment_corrected_backscatter_df = self._calc_sediment_corrected_backscatter()
         sediment_corrected_backscatter_origin = self._create_origin_from_data_frame(sediment_corrected_backscatter_df)
 
-        sediment_corrected_backscatter_manager = surrogatemodel.SurrogateData(sediment_corrected_backscatter_df,
-                                                                           sediment_corrected_backscatter_origin)
+        sediment_corrected_backscatter_manager = datamanager.DataManager(sediment_corrected_backscatter_df,
+                                                                         sediment_corrected_backscatter_origin)
 
         return SedimentCorrectedBackscatterData(sediment_corrected_backscatter_manager,
                                                 self.get_configuration_parameters(),
@@ -1338,7 +1338,7 @@ class SedimentCorrectedBackscatterData(ProcessedBackscatterData):
         mean_sediment_corrected_backscatter = pd.DataFrame(sediment_corrected_backscatter.mean(axis=1),
                                                            columns=['MeanSCB'], dtype=np.float)
         data_origin = self._create_origin_from_data_frame(mean_sediment_corrected_backscatter)
-        data_manager = surrogatemodel.SurrogateData(mean_sediment_corrected_backscatter, data_origin)
+        data_manager = datamanager.DataManager(mean_sediment_corrected_backscatter, data_origin)
 
         return ProcessedData(data_manager, self.get_configuration_parameters(), self.get_processing_parameters())
 
@@ -1502,18 +1502,6 @@ class ADVMBackscatterDataProcessor:
 
 
 class BackscatterRatingModel(surrogatemodel.SurrogateRatingModel):
-
-    def __init__(self, constituent_data, acoustic_data, **kwargs):
-        """
-
-        :param constituent_data:
-        :type constituent_data: datamanager.ConstituentData
-        :param acoustic_data:
-        :type acoustic_data: ADVMBackscatterDataProcessor
-        :param kwargs:
-        """
-
-        super().__init__(constituent_data, acoustic_data, **kwargs)
 
     def plot_backscatter_profiles(self, observation_numbers=None):
         """
