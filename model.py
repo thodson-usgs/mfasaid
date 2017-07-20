@@ -757,8 +757,8 @@ class OLSModel(RatingModel, abc.ABC):
 
         ax.legend(loc='best', numpoints=1)
 
-    def _plot_resid_probability(self, ax):
-        """Residual probability plot
+    def _plot_resid_qq(self, ax):
+        """Residual quantile-quantile
 
         :param ax:
         :return:
@@ -781,7 +781,7 @@ class OLSModel(RatingModel, abc.ABC):
         ax.set_xlim(x_lim)
         ax.set_ylim(y_lim)
 
-        ax.set_title('Probability plot')
+        ax.set_title('Q-Q plot')
 
         ax.set_xlabel('Normal quantile')
         ax.set_ylabel('Residual')
@@ -1122,9 +1122,9 @@ class OLSModel(RatingModel, abc.ABC):
 
             self._plot_resid_vs_time(ax)
 
-        elif plot_type is 'resid_probability':
+        elif plot_type is 'resid_qq':
 
-            self._plot_resid_probability(ax)
+            self._plot_resid_qq(ax)
 
         elif plot_type is 'serial_correlation':
 
@@ -1338,7 +1338,7 @@ class SimpleLinearOLSModel(OLSModel):
             variable_scatter
             resid_vs_fitted
             resid_vs_time
-            resid_probability
+            resid_qq
             serial_correlation
             model_pred_vs_obs
             pred_vs_obs
@@ -1568,7 +1568,7 @@ class MultipleLinearOLSModel(OLSModel):
             variable_scatter
             resid_vs_fitted
             resid_vs_time
-            resid_probability
+            resid_qq
             serial_correlation
             model_pred_vs_obs
             pred_vs_obs
