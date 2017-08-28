@@ -263,6 +263,10 @@ class RatingModel(abc.ABC):
 
         model_dataset = pd.DataFrame(self._model_dataset.copy(deep=True))
 
+        observation_numbers = np.arange(model_dataset.shape[0])+1
+
+        model_dataset['Obs. number'] = observation_numbers
+
         # add the transformed response variable to the dataset
         self._add_transformed_variables(self._response_variable, model_dataset)
 
@@ -895,7 +899,7 @@ class OLSModel(RatingModel, abc.ABC):
 
         # ax = plt.axes()
 
-        ax.plot(x_obs, y_obs, ls='None', color='blue', marker='.', label='Observations')
+        ax.plot(x_obs, y_obs, ls='None', color='blue', marker='.', label='Observations', picker=5)
         ax.plot(x_fit, y_fit, ls='-', color='black', label='Fit line')
         ax.plot(x_fit, l_ci, ls=':', color='black', label='Confidence interval')
         ax.plot(x_fit, u_ci, ls=':', color='black')
