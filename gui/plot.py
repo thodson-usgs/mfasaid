@@ -22,6 +22,8 @@ class ModelPlotCanvas(FigureCanvas):
         self._point_selected = False
         self._plot_model()
 
+        self._picked_index = None
+
         self._observation_numbers = self._get_observation_numbers()
 
         FigureCanvas.__init__(self, fig)
@@ -36,17 +38,16 @@ class ModelPlotCanvas(FigureCanvas):
                                    QtWidgets.QSizePolicy.Expanding)
         FigureCanvas.updateGeometry(self)
 
-    def _get_observation_numbers(self):
-        """
+    def _clear_highlighted_point(self):
 
-        :return:
-        """
+        self._highlighted_point.set_marker('None')
+        self._highlighted_point.figure.canvas.draw()
+
+    def _get_observation_numbers(self):
 
         line_data = self._observations_line.get_data(orig=True)
 
         model_data = self._rating_model.get_model_dataset()
-
-        observation_numbers = np.arange(model_data.shape[0])+1
 
         x_variable = self._axes.get_xlabel()
         y_variable = self._axes.get_ylabel()
@@ -57,31 +58,39 @@ class ModelPlotCanvas(FigureCanvas):
         return model_data.ix[x_index & y_index, 'Obs. number'].values
 
     def _on_click(self, event):
-        """
-
-        :param event:
-        :return:
-        """
-
-        print('key=%s, button=%d, x=%d, y=%d, x_data=%f, y_data=%f' %
-              (event.key, event.button, event.x, event.y, event.xdata, event.ydata))
 
         if self._point_selected:
+
+            if 1 < len(self._picked_index):
+
+                # find index of nearest data point to click point
+                line_x_data = self._observations_line.get_xdata()
+                picked_x_data = line_x_data[self._picked_index]
+                x_distance = event.xdata - picked_x_data
+
+                line_y_data = self._observations_line.get_ydata()
+                picked_y_data = line_y_data[self._picked_index]
+                y_distance = event.ydata - picked_y_data
+
+                distance_from_picked = np.sqrt(x_distance**2 + y_distance**2)
+
+                ind_of_min_distance = self._picked_index[np.argmin(distance_from_picked)]
+
+                selected_point_index = ind_of_min_distance
+
+            else:
+
+                selected_point_index = self._picked_index[0]
+
+            self._set_highlighted_point(selected_point_index)
+            self._show_selected_point_info(selected_point_index)
+
             self._point_selected = False
+            self._picked_index = None
+
         else:
-            self._highlighted_point.set_marker('None')
-            self._highlighted_point.figure.canvas.draw()
-            # print('button=%d, x=%d, y=%d, x_data=%f, y_data=%f' %
-            #       (event.button, event.x, event.y, event.xdata, event.ydata))
-        # pass
 
-    def _on_key(self, event):
-        """
-
-        :param event:
-        :return:
-        """
-        print(event.key)
+            self._clear_highlighted_point()
 
     def _on_pick(self, event):
         """
@@ -93,22 +102,10 @@ class ModelPlotCanvas(FigureCanvas):
         this_line = event.artist
 
         if this_line is self._observations_line:
-            x_data = this_line.get_xdata()
-            y_data = this_line.get_ydata()
 
-            ind = event.ind
-            points = tuple(zip(self._observation_numbers[ind], x_data[ind], y_data[ind]))
             self._point_selected = True
-            print('_on_pick points: ', points)
 
-            # pressed_key = None
-            # pressed_key = event.mouseevent.key
-
-            # print(pressed_key, event.mouseevent.button)
-
-            self._highlighted_point.set_data([x_data[ind]], [y_data[ind]])
-            self._highlighted_point.set_marker('o')
-            self._highlighted_point.figure.canvas.draw()
+            self._picked_index = event.ind
 
     def _plot_model(self):
 
@@ -119,6 +116,33 @@ class ModelPlotCanvas(FigureCanvas):
             if line.get_label() == 'Observations':
                 self._observations_line = line
                 break
+
+    def _set_highlighted_point(self, data_index):
+
+        x_data = self._observations_line.get_xdata()
+        y_data = self._observations_line.get_ydata()
+
+        self._highlighted_point.set_data([x_data[data_index]], [y_data[data_index]])
+        self._highlighted_point.set_marker('o')
+        self._highlighted_point.figure.canvas.draw()
+
+    def _show_selected_point_info(self, data_index):
+
+        x_data = self._observations_line.get_xdata()
+        y_data = self._observations_line.get_ydata()
+
+        observation_number = self._observation_numbers[data_index]
+
+        explanatory_variable = self._rating_model.get_explanatory_variables()[0]
+        response_variable = self._rating_model.get_response_variable()
+
+        point_info = "Obs. #: {0}, {1}: {2:.5g}, {3}: {4:.5g}".format(observation_number,
+                                                                      explanatory_variable,
+                                                                      x_data[data_index],
+                                                                      response_variable,
+                                                                      y_data[data_index])
+
+        print(point_info)
 
 
 class ModelPlotWindow(QtWidgets.QMainWindow):
