@@ -258,6 +258,10 @@ class RatingModel(abc.ABC):
 
         return copy.deepcopy(self._excluded_observations)
 
+    def get_explanatory_variables(self):
+
+        return self._explanatory_variables
+
     def get_model_dataset(self):
         """Return a DataFrame containing the observations used in the current model."""
 
