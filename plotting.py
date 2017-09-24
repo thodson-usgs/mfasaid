@@ -306,7 +306,7 @@ class SurrogateModelPlotCreator:
         """
 
         # get predicted data to plot
-        predicted_data = self._surrogate_rating_model.predict_raw_response_variable(
+        predicted_data = self._surrogate_rating_model.predict_response_variable(
             explanatory_data=self._surrogate_data_manager, bias_correction=True, prediction_interval=True)
 
         # mean response

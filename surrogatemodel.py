@@ -168,8 +168,8 @@ class SurrogateRatingModel:
         """
 
         # get predicted data to plot
-        predicted_data = self._model.predict_raw_response_variable(
-            explanatory_data=self._surrogate_data, bias_correction=True, prediction_interval=True)
+        predicted_data = self._model.predict_response_variable(
+            explanatory_data=self._surrogate_data, raw_response=True, bias_correction=True, prediction_interval=True)
 
         # mean response
         ax.plot(predicted_data.index, predicted_data[self._constituent_variable].as_matrix(), color='blue',

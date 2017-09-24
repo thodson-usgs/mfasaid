@@ -219,7 +219,7 @@ class LinearModel(abc.ABC):
 
         observed_response = self._data_manager.get_variable(raw_response_name)
         observed_response = observed_response.ix[model_observation_index]
-        predicted_response = self.predict_raw_response_variable(bias_correction=True)
+        predicted_response = self.predict_response_variable(raw_response=True, bias_correction=True)
 
         ax.plot(observed_response, predicted_response[raw_response_name], '.', label='Observation')
 
@@ -382,12 +382,8 @@ class LinearModel(abc.ABC):
             self._update_model()
 
     @abc.abstractmethod
-    def predict_raw_response_variable(self, **kwargs):
-        """Predict the value of the response variable given values for the explanatory variable."""
-        pass
-
-    @abc.abstractmethod
     def predict_response_variable(self, **kwargs):
+        """Predict the value of the response variable given values for the explanatory variable."""
         pass
 
 
@@ -990,7 +986,8 @@ class OLSModel(LinearModel, abc.ABC):
         # add estimated response
         _, raw_response_variable = self._find_raw_variable(self._response_variable)
         explanatory_data = datamanager.DataManager(self._model_dataset.ix[model_data_index, :], self._model_data_origin)
-        predicted_response = self.predict_raw_response_variable(explanatory_data=explanatory_data, bias_correction=True)
+        predicted_response = self.predict_response_variable(explanatory_data=explanatory_data, raw_response=True,
+                                                            bias_correction=True)
         estimated_response = predicted_response[raw_response_variable]
         estimated_response = estimated_response.rename('Estimated ' + raw_response_variable)
 
@@ -1167,7 +1164,8 @@ class OLSModel(LinearModel, abc.ABC):
 
             super().plot(plot_type, ax)
 
-    def predict_raw_response_variable(self, explanatory_data=None, bias_correction=False, prediction_interval=False):
+    def predict_response_variable(self, explanatory_data=None, bias_correction=False, raw_response=False,
+                                  prediction_interval=False):
         """Predict the response of the model.
 
         If prediction_interval=True, then a DataFrame with the mean response and upper and lower 90% prediction
@@ -1177,55 +1175,61 @@ class OLSModel(LinearModel, abc.ABC):
         :type explanatory_data: datamanager.DataManager
         :param bias_correction: Indicate whether or not to use bias correction
         :type bias_correction: bool
+        :param raw_response
+        :type raw_response: bool
         :param prediction_interval: Indicate whether or not to return a 90% prediction interval
         :type prediction_interval: bool
         :return:
         """
 
-        if self._model:
+        # TODO: Clean this mess up!
 
-            # get the model results
-            res = self._model.fit()
+        # get the model results
+        res = self._model.fit()
 
-            # get the explanatory data DataFrame
-            if explanatory_data:
-                explanatory_df = explanatory_data.get_data()
-            else:
-                explanatory_df = self._data_manager.get_data()
-                res = self._model.fit()
-                observation_index = res.resid.index
-                explanatory_df = explanatory_df.ix[observation_index]
+        # get the explanatory data DataFrame
+        if explanatory_data:
+            explanatory_df = explanatory_data.get_data()
+        else:
+            explanatory_df = self._data_manager.get_data()
+            observation_index = res.resid.index
+            explanatory_df = explanatory_df.ix[observation_index]
 
-            exog = self._get_exogenous_matrix(explanatory_df)
+        exog = self._get_exogenous_matrix(explanatory_df)
 
-            # predicted response variable
-            mean_response = self._model.predict(res.params, exog=exog)
-            mean_response = np.expand_dims(mean_response, axis=1)
+        # predicted response variable
+        mean_response = self._model.predict(res.params, exog=exog)
+        mean_response = np.expand_dims(mean_response, axis=1)
 
-            response_variable_transform, raw_response_variable = self._find_raw_variable(self._response_variable)
+        if raw_response:
+            response_variable_transform, response_name = self._find_raw_variable(self._response_variable)
+        else:
+            response_name = self._response_variable
 
-            if prediction_interval:
+        if prediction_interval:
 
-                # confidence level for two - sided hypothesis
-                confidence_level = 0.1  # 90% prediction interval
-                confidence_level_text = '{:.1f}'.format(100*(1-confidence_level))
+            # confidence level for two - sided hypothesis
+            confidence_level = 0.1  # 90% prediction interval
+            confidence_level_text = '{:.1f}'.format(100*(1-confidence_level))
 
-                _, interval_l, interval_u = wls_prediction_std(res, exog=exog, alpha=confidence_level)
+            _, interval_l, interval_u = wls_prediction_std(res, exog=exog, alpha=confidence_level)
 
-                interval_l = np.expand_dims(interval_l, axis=1)
-                interval_u = np.expand_dims(interval_u, axis=1)
+            interval_l = np.expand_dims(interval_l, axis=1)
+            interval_u = np.expand_dims(interval_u, axis=1)
 
-                response_data = np.dstack((interval_l, mean_response, interval_u))
+            response_data = np.dstack((interval_l, mean_response, interval_u))
 
-                columns = [raw_response_variable + '_L' + confidence_level_text,
-                           raw_response_variable,
-                           raw_response_variable + '_U' + confidence_level_text]
+            columns = [response_name + '_L' + confidence_level_text,
+                       response_name,
+                       response_name + '_U' + confidence_level_text]
 
-            else:
+        else:
 
-                response_data = np.expand_dims(mean_response, axis=2)
+            response_data = np.expand_dims(mean_response, axis=2)
 
-                columns = [raw_response_variable]
+            columns = [response_name]
+
+        if raw_response:
 
             if bias_correction:
 
@@ -1240,81 +1244,11 @@ class OLSModel(LinearModel, abc.ABC):
                 inverse_transform_func = self._inverse_transform_functions[response_variable_transform]
                 predicted_data = inverse_transform_func(response_data)
 
-            predicted = pd.DataFrame(data=predicted_data, index=explanatory_df.index, columns=columns)
-            predicted = predicted.join(explanatory_df[list(self._explanatory_variables)], how='outer')
-
         else:
+            predicted_data = np.squeeze(response_data, axis=1)
 
-            predicted = pd.DataFrame(columns=[self._response_variable] + list(self._explanatory_variables))
-
-        return predicted
-
-    def predict_response_variable(self, explanatory_data=None, prediction_interval=False):
-        """Predict the response of the model.
-
-        If prediction_interval=True, then a DataFrame with the mean response and upper and lower 90% prediction
-        interval is returned.
-
-        :param explanatory_data: Data manager containing explanatory variable data
-        :type explanatory_data: datamanager.DataManager
-        :param bias_correction: Indicate whether or not to use bias correction
-        :type bias_correction: bool
-        :param prediction_interval: Indicate whether or not to return a 90% prediction interval
-        :type prediction_interval: bool
-        :return:
-        """
-
-        # TODO: Generalize so it can be used in predict_raw_response_variable()
-
-        if self._model:
-
-            # get the model results
-            res = self._model.fit()
-
-            # get the explanatory data DataFrame
-            if explanatory_data:
-                explanatory_df = explanatory_data.get_data()
-            else:
-                explanatory_df = self._data_manager.get_data()
-                res = self._model.fit()
-                observation_index = res.resid.index
-                explanatory_df = explanatory_df.ix[observation_index]
-
-            exog = self._get_exogenous_matrix(explanatory_df)
-
-            # predicted response variable
-            mean_response = self._model.predict(res.params, exog=exog)
-            mean_response = np.expand_dims(mean_response, axis=1)
-
-            if prediction_interval:
-
-                # confidence level for two - sided hypothesis
-                confidence_level = 0.1  # 90% prediction interval
-                confidence_level_text = '{:.1f}'.format(100*(1-confidence_level))
-
-                _, interval_l, interval_u = wls_prediction_std(res, exog=exog, alpha=confidence_level)
-
-                interval_l = np.expand_dims(interval_l, axis=1)
-                interval_u = np.expand_dims(interval_u, axis=1)
-
-                response_data = np.dstack((interval_l, mean_response, interval_u))
-
-                columns = [self._response_variable + '_L' + confidence_level_text,
-                           self._response_variable,
-                           self._response_variable + '_U' + confidence_level_text]
-
-            else:
-
-                response_data = np.expand_dims(mean_response, axis=2)
-
-                columns = [self._response_variable]
-
-            predicted = pd.DataFrame(data=response_data, index=explanatory_df.index, columns=columns)
-            predicted = predicted.join(explanatory_df[list(self._explanatory_variables)], how='outer')
-
-        else:
-
-            predicted = pd.DataFrame(columns=[self._response_variable] + list(self._explanatory_variables))
+        predicted = pd.DataFrame(data=predicted_data, index=explanatory_df.index, columns=columns)
+        predicted = predicted.join(explanatory_df[list(self._explanatory_variables)], how='outer')
 
         return predicted
 
@@ -2186,7 +2120,7 @@ class CompoundLinearModel(LinearModel):
 
         self._update_model()
 
-    def predict_raw_response_variable(self, **kwargs):
+    def predict_response_variable(self, **kwargs):
         """
 
         :param explanatory_data:
@@ -2217,9 +2151,9 @@ class CompoundLinearModel(LinearModel):
             segment_index = (lower_bound <= explanatory_series) & (explanatory_series < upper_bound)
             predictor_data_manager = datamanager.DataManager(explanatory_df.ix[segment_index, :],
                                                              explanatory_origin)
-            segment_predicted = self._model[i].predict_raw_response_variable(explanatory_data=predictor_data_manager,
-                                                                             bias_correction=bias_correction,
-                                                                             prediction_interval=prediction_interval)
+            segment_predicted = self._model[i].predict_response_variable(explanatory_data=predictor_data_manager,
+                                                                         bias_correction=bias_correction,
+                                                                         prediction_interval=prediction_interval)
             predicted = pd.concat([predicted, segment_predicted])
 
         return predicted
