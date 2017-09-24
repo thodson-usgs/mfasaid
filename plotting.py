@@ -306,7 +306,7 @@ class SurrogateModelPlotCreator:
         """
 
         # get predicted data to plot
-        predicted_data = self._surrogate_rating_model.predict_response_variable(
+        predicted_data = self._surrogate_rating_model.predict_raw_response_variable(
             explanatory_data=self._surrogate_data_manager, bias_correction=True, prediction_interval=True)
 
         # mean response
@@ -342,7 +342,7 @@ class SurrogateModelPlotCreator:
 
         # set the y scale to logarithmic if the response variable is log transformed
         response_variable_name = self._surrogate_rating_model.get_response_variable()
-        response_transform = self._surrogate_rating_model.get_variable_transform(response_variable_name)
+        response_transform = self._surrogate_rating_model._get_variable_transform(response_variable_name)
         if (response_transform is 'log') or (response_transform is 'log10'):
             ax.set_yscale('log')
 

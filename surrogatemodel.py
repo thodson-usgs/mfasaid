@@ -49,33 +49,49 @@ class SurrogateRatingModel:
 
         model_data = self._get_model_data()
 
+        # get the name of the response variable to use in a model
+        constituent_variable_transform = self.get_constituent_transform()
+        response_variable = saidmodel.LinearModel.get_variable_transform_name(self._constituent_variable,
+                                                                              constituent_variable_transform)
+
+        # if more than one surrogate variable, create a multiple linear regression model
         if len(self._surrogate_variables) > 1:
 
-            model = saidmodel.MultipleLinearOLSModel(model_data,
-                                                     response_variable=self._constituent_variable,
-                                                     explanatory_variables=self._surrogate_variables)
+            explanatory_variables = []
 
+            # get the names of the
             for variable in self._surrogate_variables:
-                model.transform_explanatory_variable(variable, self._surrogate_transform[variable[0]])
+                variable_transform = self._surrogate_transform[variable][0]
+                transformed_variable = saidmodel.LinearModel.get_variable_transform_name(variable, variable_transform)
+                explanatory_variables.append(transformed_variable)
+            model = saidmodel.MultipleOLSModel(model_data,
+                                               response_variable=response_variable,
+                                               explanatory_variables=explanatory_variables)
 
+        # otherwise, create a complex simple or complex linear model, depending on the amount of surrogate variable
+        # transformations
         else:
 
             surrogate_variable = self._surrogate_variables[0]
             surrogate_variable_transform = self._surrogate_transform[surrogate_variable]
 
+            # if more than one transform, create a complex linear model
             if len(surrogate_variable_transform) > 1:
                 model = saidmodel.ComplexOLSModel(model_data,
-                                                  response_variable=self._constituent_variable,
+                                                  response_variable=response_variable,
                                                   explanatory_variable=surrogate_variable)
                 for transform in surrogate_variable_transform:
                     model.add_explanatory_var_transform(transform)
-            else:
-                model = saidmodel.SimpleLinearOLSModel(model_data,
-                                                       response_variable=self._constituent_variable,
-                                                       explanatory_variable=surrogate_variable)
-                model.transform_explanatory_variable(surrogate_variable_transform[0])
 
-        model.transform_response_variable(self._constituent_transform[self._constituent_variable])
+            # otherwise, create a simple linear model
+            else:
+                explanatory_variable = \
+                    saidmodel.LinearModel.get_variable_transform_name(surrogate_variable,
+                                                                      surrogate_variable_transform[0])
+                model = saidmodel.SimpleOLSModel(model_data,
+                                                 response_variable=response_variable,
+                                                 explanatory_variable=explanatory_variable)
+
         model.exclude_observation(self._excluded_observations)
 
         return model
@@ -105,9 +121,8 @@ class SurrogateRatingModel:
         """
 
         model_dataset = self._model.get_model_dataset()
-        response_variable = self._model.get_response_variable()
 
-        constituent_variable_series = model_dataset[response_variable]
+        constituent_variable_series = model_dataset[self._constituent_variable]
 
         missing_observation_index = model_dataset['Missing']
         excluded_observation_index = model_dataset['Excluded']
@@ -138,12 +153,11 @@ class SurrogateRatingModel:
         self._plot_constituent_time_series(ax)
 
         # set the y scale to logarithmic if the response variable is log transformed
-        response_variable_name = self._model.get_response_variable()
-        response_transform = self._model.get_variable_transform(response_variable_name)
-        if (response_transform is 'log') or (response_transform is 'log10'):
+        constituent_transform = self.get_constituent_transform()
+        if (constituent_transform is 'log') or (constituent_transform is 'log10'):
             ax.set_yscale('log')
 
-        ax.set_ylabel(response_variable_name)
+        ax.set_ylabel(self._constituent_variable)
         ax.legend(loc='best', numpoints=1)
 
     def _plot_predicted_time_series(self, ax):
@@ -154,20 +168,19 @@ class SurrogateRatingModel:
         """
 
         # get predicted data to plot
-        predicted_data = self._model.predict_response_variable(
+        predicted_data = self._model.predict_raw_response_variable(
             explanatory_data=self._surrogate_data, bias_correction=True, prediction_interval=True)
 
         # mean response
-        response_variable_name = self._model.get_response_variable()
-        ax.plot(predicted_data.index, predicted_data[response_variable_name].as_matrix(), color='blue',
+        ax.plot(predicted_data.index, predicted_data[self._constituent_variable].as_matrix(), color='blue',
                 linestyle='None', marker='.', markersize=5,
-                label='Predicted ' + response_variable_name)
+                label='Predicted ' + self._constituent_variable)
 
         # lower prediction interval
-        lower_interval_name = response_variable_name + '_L90.0'
+        lower_interval_name = self._constituent_variable + '_L90.0'
 
         # upper prediction interval
-        upper_interval_name = response_variable_name + '_U90.0'
+        upper_interval_name = self._constituent_variable + '_U90.0'
 
         ax.fill_between(predicted_data.index,
                         predicted_data[lower_interval_name].as_matrix(),
@@ -186,7 +199,7 @@ class SurrogateRatingModel:
         surrogate_variable = self._surrogate_data.get_variable(surrogate_variable_name)
         surrogate_variable = surrogate_variable.dropna()
         surrogate_variable = np.squeeze(surrogate_variable)
-        surrogate_pp = stats.calc_plotting_position(surrogate_variable)
+        surrogate_pp = stats.calc_plotting_position(surrogate_variable, a=0)
 
         # plot the surrogate plotting positions
         ax.plot(surrogate_variable, surrogate_pp, marker='.', markersize=5,
@@ -231,14 +244,17 @@ class SurrogateRatingModel:
         :return: 
         """
 
-        saidmodel.RatingModel.check_transform(surrogate_transform)
+        saidmodel.LinearModel.check_transform(surrogate_transform)
 
         surrogate_variables = self._surrogate_data.get_variable_names()
         if surrogate_variable not in surrogate_variables:
             raise ValueError("Invalid surrogate variable name: {}".format(surrogate_variable))
 
-        self._surrogate_transform[surrogate_variable] = self._surrogate_transform[surrogate_variable] + \
-                                                        (surrogate_transform,)
+        self._surrogate_transform[surrogate_variable] = self._surrogate_transform[surrogate_variable] \
+                                                        + (surrogate_transform,)
+
+        if surrogate_variable in self._surrogate_variables:
+            self._model = self._create_model()
 
     def exclude_observations(self, observations):
         """
@@ -251,7 +267,7 @@ class SurrogateRatingModel:
         self._model = self._create_model()
 
     def get_constituent_transform(self):
-        """
+        """ Returns the current transform of the constituent variable
 
         :return: 
         """
@@ -283,7 +299,7 @@ class SurrogateRatingModel:
         return self._model.get_response_variable()
 
     def get_surrogate_transform(self):
-        """
+        """Returns a dictionary containing the surrogate variables and the transforms
 
         :return: 
         """
@@ -352,7 +368,7 @@ class SurrogateRatingModel:
         :return: 
         """
 
-        saidmodel.RatingModel.check_transform(constituent_transform)
+        saidmodel.LinearModel.check_transform(constituent_transform)
         self._constituent_transform[self._constituent_variable] = constituent_transform
         self._model = self._create_model()
 
@@ -366,6 +382,10 @@ class SurrogateRatingModel:
         constituent_variable_names = self.get_constituent_variable_names()
         if constituent_variable not in constituent_variable_names:
             raise ValueError("Invalid constituent variable name: {}".format(constituent_variable))
+
+        self._constituent_variable = constituent_variable
+
+        self._model = self._create_model()
 
     def set_observation_match_method(self, method, time):
         """
@@ -397,7 +417,7 @@ class SurrogateRatingModel:
         :return:
         """
 
-        saidmodel.RatingModel.check_transform(surrogate_transform)
+        saidmodel.LinearModel.check_transform(surrogate_transform)
         if surrogate_variable is None:
             surrogate_variable = self._surrogate_data.get_variable_names()[0]
         elif surrogate_variable not in self._surrogate_data.get_variable_names():

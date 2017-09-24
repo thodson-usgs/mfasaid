@@ -1,7 +1,7 @@
 import numpy as np
 
 
-def calc_plotting_position(x, a=0.5):
+def calc_plotting_position(x, a=0.4):
     """
 
     :param x:

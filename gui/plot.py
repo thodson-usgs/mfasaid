@@ -30,7 +30,6 @@ class ModelPlotCanvas(FigureCanvas):
         self.setParent(parent)
 
         fig.canvas.mpl_connect('button_press_event', self._on_click)
-        fig.canvas.mpl_connect('key_press_event', self._on_key)
         fig.canvas.mpl_connect('pick_event', self._on_pick)
 
         FigureCanvas.setSizePolicy(self,
