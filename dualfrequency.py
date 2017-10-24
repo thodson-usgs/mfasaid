@@ -1,12 +1,12 @@
 import copy
 
+import data
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy.stats import lognorm
 
-import data
-import model
+from linearmodel import model
 
 SPEED_OF_SOUND_IN_WATER = 1442.5  # m/s
 

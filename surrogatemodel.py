@@ -4,8 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-import model as saidmodel
-import stats
+from linearmodel import stats, model as saidmodel
 
 
 class SurrogateRatingModel:

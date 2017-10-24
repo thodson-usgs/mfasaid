@@ -1,12 +1,12 @@
+from datetime import timedelta
+
 import matplotlib.colors
 import matplotlib.lines
 import matplotlib.pyplot as plt
 import numpy as np
 
-from datetime import timedelta
-
 import datamanager
-import stats
+from linearmodel import stats
 
 
 class LineStyleGenerator:
