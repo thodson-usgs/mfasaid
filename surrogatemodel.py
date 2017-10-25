@@ -273,6 +273,14 @@ class SurrogateRatingModel:
 
         return self._constituent_data.get_variable_names()
 
+    def get_explanatory_variables(self):
+
+        return self._model.get_explanatory_variables()
+
+    def get_response_variable(self):
+
+        return self._model.get_response_variable()
+
     def get_surrogate_transform(self):
         """
 
