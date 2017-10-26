@@ -5,7 +5,7 @@ import matplotlib.lines
 import matplotlib.pyplot as plt
 import numpy as np
 
-import datamanager
+from linearmodel import datamanager
 from linearmodel import stats
 
 
