@@ -10,8 +10,8 @@ import numpy as np
 import pandas as pd
 
 from linearmodel import datamanager
-import surrogatemodel
-from plotting import LineStyleGenerator
+import said.surrogatemodel as surrogatemodel
+from said.plotting import LineStyleGenerator
 
 
 class AcousticException(Exception):
