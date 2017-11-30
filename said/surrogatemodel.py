@@ -394,7 +394,7 @@ class SurrogateRatingModel:
         :return: 
         """
 
-        if method != 'nearest' or method != 'mean':
+        if method not in ['nearest', 'mean']:
             raise ValueError("Invalid match method: {}".format(method))
 
         if time < 0:
