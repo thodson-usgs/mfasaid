@@ -558,89 +558,79 @@ class RawBackscatterData(BackscatterData):
 
         self._data_manager = datamanager.DataManager(acoustic_df, acoustic_data_origin)
 
-    def _calc_measured_backscatter(self, processing_parameters):
-        """Calculate measured backscatter values based on processing parameters.
+    def add_data(self, other, keep_curr_obs=None):
+        """Adds other RawADMVSedimentAcoustic data instance to self.
 
+        Throws exception if other ADVMData object is incompatible with self. An exception will be raised if
+        keep_curr_obs=None and concurrent observations exist for variables.
+
+        :param other: RawADMVSedimentAcousticData object to be added
+        :type other: RawADMVSedimentAcousticData
+        :param keep_curr_obs: {None, True, False} Flag to indicate whether or not to keep current observations.
+        :return: Merged RawADMVSedimentAcoustic object
+        """
+
+        # test compatibility of other data set
+        if not self._configuration_parameters.is_compatible(other.get_configuration_parameters()) and \
+                isinstance(other, type(self)):
+
+            raise ADVMDataIncompatibleError("ADVM data sets are incompatible")
+
+        other_data = other.get_data()
+        other_origin = other.get_origin()
+
+        other_data_manager = datamanager.DataManager(other_data, other_origin)
+
+        combined_data_manager = self._data_manager.add_data(other_data_manager, keep_curr_obs=keep_curr_obs)
+
+        return type(self)(combined_data_manager, self._configuration_parameters)
+
+    @classmethod
+    def find_advm_variable_names(cls, df):
+        """Finds and return a list of ADVM variables contained within a dataframe.
+
+        :param df:
         :return:
         """
 
-        # get the backscatter value to return
-        backscatter_values = processing_parameters["Backscatter Values"]
+        # compile regular expression pattern
+        advm_columns_pattern = re.compile(cls._advm_columns_regex)
 
-        # get the beam number from the processing parameters
-        beam_number = processing_parameters["Beam"]
+        # create empty list to hold column names
+        advm_columns = []
 
-        # if the beam number is average, calculate the average among the beams
-        if beam_number == 'Avg':
+        # find the acoustic backscatter column names within the DataFrame
+        for column in list(df.keys()):
+            abs_match = advm_columns_pattern.fullmatch(column)
+            if abs_match is not None:
+                advm_columns.append(abs_match.string)
 
-            # initialize empty list to hold backscatter data frames
-            backscatter_list = []
-
-            number_of_beams = self._configuration_parameters['Number of Beams']
-
-            for beam_number in range(1, number_of_beams + 1):
-                beam_backscatter_df = self._get_mb_array(backscatter_values, beam_number)
-
-                backscatter_list.append(beam_backscatter_df)
-
-            # cast to keep PyCharm from complaining
-            df_concat = pd.DataFrame(pd.concat(backscatter_list))
-
-            by_row_index = df_concat.groupby(df_concat.index)
-
-            backscatter_df = by_row_index.mean()
-
-        # otherwise, get the backscatter from the single beam
+        if len(advm_columns) == 0:
+            return None
         else:
+            return advm_columns
 
-            backscatter_df = self._get_mb_array(backscatter_values, beam_number)
+    @classmethod
+    def read_tab_delimited_data(cls, file_path, configuration_parameters):
+        """Create an ADVMData object from a tab-delimited text file that contains raw acoustic variables.
 
-        # if Amp is selected, apply the intensity scale factor to the backscatter values
-        if backscatter_values == 'Amp':
-            scale_factor = processing_parameters['Intensity Scale Factor']
-            backscatter_df = scale_factor * backscatter_df
+        ADVM configuration parameters must be provided as an argument.
 
-        return backscatter_df
+        :param file_path: Path to tab-delimited file
+        :type file_path: str
+        :param configuration_parameters: ADVMConfigParam containing necessary ADVM configuration parameters
+        :type configuration_parameters: ADVMConfigParam
 
-    def _get_mb_array(self, backscatter_values, beam_number):
-        """Extract measured backscatter values from the acoustic data frame.
-
-        :param backscatter_values: Backscatter values to return. 'SNR' or 'Amp'
-        :param beam_number: Beam number to extract
-        :return: Dataframe containing backscatter from the requested beam
+        :return: ADVMData object
         """
 
-        acoustic_df = self._data_manager.get_data()
+        data_manager = datamanager.DataManager.read_tab_delimited_data(file_path)
 
-        number_of_cells = int(self._configuration_parameters['Number of Cells'])
-        number_of_obs = acoustic_df.shape[0]
+        return cls(data_manager, configuration_parameters)
 
-        # create an number_of_obs by number_of_cells array of NaNs
-        backscatter_array = np.tile(np.nan, (number_of_obs, number_of_cells))
 
-        # create a data frame with the nan values as the data
-        mb_column_names = ['MB{:03}'.format(cell) for cell in range(1, number_of_cells + 1)]
-        mb_df = pd.DataFrame(index=acoustic_df.index, data=backscatter_array, columns=mb_column_names)
-
-        # go through each cell and fill the data from the acoustic data frame
-        # skip the cell and leave the values nan if the cell hasn't been loaded
-        for cell in range(1, number_of_cells + 1):
-
-            # get the column names for the backscatter in each data frame
-            arg_col_name = r'Cell{:02}{}{:1}'.format(cell, backscatter_values, beam_number)
-            mb_col_name = r'MB{:03}'.format(cell)
-
-            # try to fill the columns
-            # if fail, continue and leave the values nan
-            try:
-                mb_df.ix[:, mb_col_name] = acoustic_df.ix[:, arg_col_name]
-            except KeyError as err:
-                if err.args[0] == arg_col_name:
-                    continue
-                else:
-                    raise err
-
-        return mb_df
+class ArgonautRawBackscatterData(RawBackscatterData):
+    """Handles instrument-specific data for the SonTek Argonaut SL (second generation SL)"""
 
     @staticmethod
     def _read_argonaut_ctl_file(arg_ctl_filepath):
@@ -763,82 +753,6 @@ class RawBackscatterData(BackscatterData):
 
         return snr_df
 
-    def add_data(self, other, keep_curr_obs=None):
-        """Adds other RawADMVSedimentAcoustic data instance to self.
-
-        Throws exception if other ADVMData object is incompatible with self. An exception will be raised if
-        keep_curr_obs=None and concurrent observations exist for variables.
-
-        :param other: RawADMVSedimentAcousticData object to be added
-        :type other: RawADMVSedimentAcousticData
-        :param keep_curr_obs: {None, True, False} Flag to indicate whether or not to keep current observations.
-        :return: Merged RawADMVSedimentAcoustic object
-        """
-
-        # test compatibility of other data set
-        if not self._configuration_parameters.is_compatible(other.get_configuration_parameters()) and \
-                isinstance(other, type(self)):
-
-            raise ADVMDataIncompatibleError("ADVM data sets are incompatible")
-
-        other_data = other.get_data()
-        other_origin = other.get_origin()
-
-        other_data_manager = datamanager.DataManager(other_data, other_origin)
-
-        combined_data_manager = self._data_manager.add_data(other_data_manager, keep_curr_obs=keep_curr_obs)
-
-        return type(self)(combined_data_manager, self._configuration_parameters)
-
-    def calculate_measured_backscatter(self, processing_parameters):
-        """
-        
-        :param processing_parameters: 
-        :return: 
-        """
-
-        assert isinstance(processing_parameters, ADVMProcParam)
-
-        measured_backscatter_data = self._calc_measured_backscatter(processing_parameters)
-        temperature_data = self._data_manager.get_variable('Temp')
-        vertical_beam_data = self._data_manager.get_variable('Vbeam')
-
-        measured_backscatter_data = pd.concat([temperature_data, vertical_beam_data, measured_backscatter_data], axis=1)
-
-        measured_backscatter_origin = self._create_origin_from_data_frame(measured_backscatter_data)
-
-        measured_backscatter_manager = datamanager.DataManager(measured_backscatter_data,
-                                                               measured_backscatter_origin)
-
-        return MeasuredBackscatterData(measured_backscatter_manager,
-                                       self._configuration_parameters,
-                                       processing_parameters)
-
-    @classmethod
-    def find_advm_variable_names(cls, df):
-        """Finds and return a list of ADVM variables contained within a dataframe.
-
-        :param df:
-        :return:
-        """
-
-        # compile regular expression pattern
-        advm_columns_pattern = re.compile(cls._advm_columns_regex)
-
-        # create empty list to hold column names
-        advm_columns = []
-
-        # find the acoustic backscatter column names within the DataFrame
-        for column in list(df.keys()):
-            abs_match = advm_columns_pattern.fullmatch(column)
-            if abs_match is not None:
-                advm_columns.append(abs_match.string)
-
-        if len(advm_columns) == 0:
-            return None
-        else:
-            return advm_columns
-
     @classmethod
     def read_argonaut_data(cls, data_directory, filename):
         """Loads an Argonaut data set into an ADVMData class object.
@@ -877,32 +791,146 @@ class RawBackscatterData(BackscatterData):
 
         return cls(data_manager, configuration_parameters)
 
-    @classmethod
-    def read_tab_delimited_data(cls, file_path, configuration_parameters):
-        """Create an ADVMData object from a tab-delimited text file that contains raw acoustic variables.
-
-        ADVM configuration parameters must be provided as an argument.
-
-        :param file_path: Path to tab-delimited file
-        :type file_path: str
-        :param configuration_parameters: ADVMConfigParam containing necessary ADVM configuration parameters
-        :type configuration_parameters: ADVMConfigParam
-
-        :return: ADVMData object
-        """
-
-        data_manager = datamanager.DataManager.read_tab_delimited_data(file_path)
-
-        return cls(data_manager, configuration_parameters)
-
 
 class MeasuredBackscatterData(ProcessedBackscatterData):
 
-    def __init__(self, data_manager, configuration_parameters, processing_parameters):
+    def __init__(self, raw_backscatter_data, processing_parameters):
+        """
 
-        super().__init__(data_manager, configuration_parameters, processing_parameters)
+        :param raw_backscatter_data:
+        :param processing_parameters:
+        """
+
+        # calculate measured backscatter
+        raw_data_df = raw_backscatter_data.get_data()
+        configuration_parameters = raw_backscatter_data.get_configuration_parameters()
+        measured_backscatter_data = self._calc_measured_backscatter(
+            raw_data_df, configuration_parameters, processing_parameters)
+
+        # add temperature and vertical beam data to the measured backscatter data
+        temperature_data = raw_backscatter_data.get_variable('Temp')
+        vertical_beam_data = raw_backscatter_data.get_variable('Vbeam')
+        measured_backscatter_data = pd.concat([temperature_data, vertical_beam_data, measured_backscatter_data], axis=1)
+
+        # create a data manager for the measured backscatter data
+        measured_backscatter_origin = self._create_origin_from_data_frame(measured_backscatter_data)
+        measured_backscatter_manager = datamanager.DataManager(measured_backscatter_data,
+                                                               measured_backscatter_origin)
+
+        super().__init__(measured_backscatter_manager, configuration_parameters, processing_parameters)
 
         self._backscatter_name = 'Measured backscatter'
+
+    def _calc_measured_backscatter(self, raw_data_df, configuration_parameters, processing_parameters):
+        """Calculate measured backscatter values based on processing parameters.
+
+        :return:
+        """
+
+        # get the backscatter value to return
+        backscatter_values = processing_parameters["Backscatter Values"]
+
+        # get the beam number from the processing parameters
+        beam_number = processing_parameters["Beam"]
+
+        number_of_cells = int(configuration_parmeters['Number of Cells'])
+
+        # if the beam number is average, calculate the average among the beams
+        if beam_number == 'Avg':
+
+            # initialize empty list to hold backscatter data frames
+            backscatter_list = []
+
+            number_of_beams = configuration_parameters['Number of Beams']
+
+            for beam_number in range(1, number_of_beams + 1):
+                beam_backscatter_df = self._get_mb_array(raw_data_df, backscatter_values, beam_number, number_of_cells)
+
+                backscatter_list.append(beam_backscatter_df)
+
+            # cast to keep PyCharm from complaining
+            df_concat = pd.DataFrame(pd.concat(backscatter_list))
+
+            by_row_index = df_concat.groupby(df_concat.index)
+
+            backscatter_df = by_row_index.mean()
+
+        # otherwise, get the backscatter from the single beam
+        else:
+
+            backscatter_df = self._get_mb_array(raw_data_df, backscatter_values, beam_number, number_of_cells)
+
+        # if Amp is selected, apply the intensity scale factor to the backscatter values
+        if backscatter_values == 'Amp':
+            scale_factor = processing_parameters['Intensity Scale Factor']
+            backscatter_df = scale_factor * backscatter_df
+
+        return backscatter_df
+
+    @staticmethod
+    def _get_mb_array(acoustic_df, backscatter_values, beam_number, number_of_cells):
+        """Extract measured backscatter values from the acoustic data frame.
+
+        :param backscatter_values: Backscatter values to return. 'SNR' or 'Amp'
+        :param beam_number: Beam number to extract
+        :return: Dataframe containing backscatter from the requested beam
+        """
+
+        number_of_obs = acoustic_df.shape[0]
+
+        # create an number_of_obs by number_of_cells array of NaNs
+        backscatter_array = np.tile(np.nan, (number_of_obs, number_of_cells))
+
+        # create a data frame with the nan values as the data
+        mb_column_names = ['MB{:03}'.format(cell) for cell in range(1, number_of_cells + 1)]
+        mb_df = pd.DataFrame(index=acoustic_df.index, data=backscatter_array, columns=mb_column_names)
+
+        # go through each cell and fill the data from the acoustic data frame
+        # skip the cell and leave the values nan if the cell hasn't been loaded
+        for cell in range(1, number_of_cells + 1):
+
+            # get the column names for the backscatter in each data frame
+            arg_col_name = r'Cell{:02}{}{:1}'.format(cell, backscatter_values, beam_number)
+            mb_col_name = r'MB{:03}'.format(cell)
+
+            # try to fill the columns
+            # if fail, continue and leave the values nan
+            try:
+                mb_df.ix[:, mb_col_name] = acoustic_df.ix[:, arg_col_name]
+            except KeyError as err:
+                if err.args[0] == arg_col_name:
+                    continue
+                else:
+                    raise err
+
+        return mb_df
+
+    def get_measured_backscatter(self):
+        """
+
+        :return:
+        """
+
+        data = self._data_manager.get_data()
+
+        return data.filter(regex='^MB\d{3}$')
+
+
+class WaterCorrectedBackscatterData(ProcessedBackscatterData):
+
+    def __init__(self, measured_backscatter):
+
+        water_corrected_backscatter_df = self._calc_water_corrected_backscatter(measured_backscatter)
+        water_corrected_backscatter_origin = self._create_origin_from_data_frame(water_corrected_backscatter_df)
+        water_corrected_backscatter_data_manager = datamanager.DataManager(water_corrected_backscatter_df,
+                                                                           water_corrected_backscatter_origin)
+
+        configuration_parameters = measured_backscatter.get_configuration_parameters()
+        processing_parameters = measured_backscatter.get_processing_parameters()
+
+        super().__init__(water_corrected_backscatter_data_manager, configuration_parameters, processing_parameters)
+
+        self._backscatter_name = 'Water corrected backscatter'
 
     @staticmethod
     def _apply_cell_range_filter(water_corrected_backscatter, cell_range, min_cell_range, max_cell_range):
@@ -1076,48 +1104,51 @@ class MeasuredBackscatterData(ProcessedBackscatterData):
 
         return water_absorption_loss
 
-    def _calc_water_corrected_backscatter(self):
+    def _calc_water_corrected_backscatter(self, measured_backscatter):
         """Calculate water corrected backscatter (WCB).
 
         :return:
         """
 
-        acoustic_data = self._data_manager.get_data()
+        temperature = measured_backscatter.get_variable('Temp')
+        configuration_parameters = measured_backscatter.get_configuration_parameters()
+        processing_parameters = measured_backscatter.get_processing_parameters()
+
         cell_range = self.get_cell_range()
-        # calculate the water corrected backscatter
+        # calculate losses
         geometric_loss = self._calc_geometric_loss(cell_range.as_matrix(),
-                                                   temperature=acoustic_data['Temp'].as_matrix(),
-                                                   frequency=self._configuration_parameters['Frequency'],
-                                                   trans_rad=self._configuration_parameters[
+                                                   temperature=temperature.as_matrix(),
+                                                   frequency=configuration_parameters['Frequency'],
+                                                   trans_rad=configuration_parameters[
                                                                  'Effective Transducer Diameter']/2,
-                                                   nearfield_corr=self._processing_parameters['Near Field Correction'])
-        water_absorption_loss = self._calc_water_absorption_loss(acoustic_data['Temp'].as_matrix(),
-                                                                 self._configuration_parameters['Frequency'],
+                                                   nearfield_corr=processing_parameters['Near Field Correction'])
+        water_absorption_loss = self._calc_water_absorption_loss(temperature.as_matrix(),
+                                                                 configuration_parameters['Frequency'],
                                                                  cell_range.as_matrix())
         two_way_transmission_loss = geometric_loss + water_absorption_loss
 
-        measured_backscatter = self.get_measured_backscatter()
-        water_corrected_backscatter = measured_backscatter.as_matrix() + two_way_transmission_loss
+        # apply the losses to the measured backscatter to get water corrected backscatter
+        measured_backscatter_df = measured_backscatter.get_measured_backscatter()
+        water_corrected_backscatter = measured_backscatter_df.as_matrix() + two_way_transmission_loss
 
         # adjust the water corrected backscatter profile
-        if self._processing_parameters['WCB Profile Adjustment']:
-
+        if processing_parameters['WCB Profile Adjustment']:
             water_corrected_backscatter = self._apply_minwcb_correction(water_corrected_backscatter)
 
         water_corrected_backscatter = self._remove_min_vbeam(water_corrected_backscatter,
                                                              self._processing_parameters['Minimum Vbeam'])
 
-        min_cell_distance = self._processing_parameters['Minimum Cell Mid-Point Distance']
-        max_cell_distance = self._processing_parameters['Maximum Cell Mid-Point Distance']
+        min_cell_distance = processing_parameters['Minimum Cell Mid-Point Distance']
+        max_cell_distance = processing_parameters['Maximum Cell Mid-Point Distance']
         water_corrected_backscatter = self._apply_cell_range_filter(water_corrected_backscatter,
                                                                     cell_range.as_matrix(),
                                                                     min_cell_distance,
                                                                     max_cell_distance)
 
         # create a data frame of the water corrected backscatter observations
-        index = acoustic_data.index
+        index = temperature.index
         wcb_columns = ['WCB{:03}'.format(cell) for cell in
-                       range(1, self._configuration_parameters['Number of Cells']+1)]
+                       range(1, configuration_parameters['Number of Cells']+1)]
         water_corrected_backscatter_df = pd.DataFrame(index=index,
                                                       data=water_corrected_backscatter,
                                                       columns=wcb_columns)
@@ -1141,46 +1172,20 @@ class MeasuredBackscatterData(ProcessedBackscatterData):
 
         return water_corrected_backscatter
 
-    def calculate_water_corrected_backscatter(self):
-        """
-        
-        :return: 
-        """
-
-        water_corrected_backscatter_df = self._calc_water_corrected_backscatter()
-        water_corrected_backscatter_origin = self._create_origin_from_data_frame(water_corrected_backscatter_df)
-        water_corrected_backscatter_data_manager = datamanager.DataManager(water_corrected_backscatter_df,
-                                                                           water_corrected_backscatter_origin)
-        return WaterCorrectedBackscatterData(water_corrected_backscatter_data_manager,
-                                             self.get_configuration_parameters(),
-                                             self.get_processing_parameters())
-
-    def get_data(self):
-        """
-        
-        :return: 
-        """
-
-        return self.get_measured_backscatter()
-
-    def get_measured_backscatter(self):
-        """
-        
-        :return: 
-        """
+    def get_water_corrected_backscatter(self):
 
         data = self._data_manager.get_data()
 
-        return data.filter(regex='^MB\d{3}$')
+        return data.filter(regex='^WCB\d{3}$')
 
 
-class WaterCorrectedBackscatterData(ProcessedBackscatterData):
+class SedimentCorrectedBackscatterData(ProcessedBackscatterData):
 
     def __init__(self, data_manager, configuration_parameters, processing_parameters):
 
         super().__init__(data_manager, configuration_parameters, processing_parameters)
 
-        self._backscatter_name = 'Water corrected backscatter'
+        self._backscatter_name = 'Sediment corrected backscatter'
 
     @staticmethod
     def _calc_sediment_attenuation_coefficient(water_corrected_backscatter, cell_range):
@@ -1329,8 +1334,8 @@ class SedimentCorrectedBackscatterData(ProcessedBackscatterData):
 
     def calculate_mean_sediment_corrected_backscatter(self):
         """
-        
-        :return: 
+
+        :return:
         """
 
         sediment_corrected_backscatter = self.get_data()
