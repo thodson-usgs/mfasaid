@@ -140,6 +140,19 @@ class BackscatterData:
     def add_data(self, other, keep_curr_obs=None):
         pass
 
+    def get_backscatter_data(self):
+        """
+
+        :return:
+        """
+
+        data = self._data_manager.get_data()
+        backscatter_data = data.filter(regex=self._column_regex)
+        sorted_columns = sorted(backscatter_data.columns)
+        backscatter_data = backscatter_data.reindex_axis(sorted_columns, axis=1)
+
+        return backscatter_data
+
     @abc.abstractmethod
     def get_cell_range(self):
         pass
@@ -175,6 +188,7 @@ class BackscatterData:
 
 class ProcessedBackscatterData(BackscatterData):
 
+    @abc.abstractmethod
     def __init__(self, data_manager, configuration_parameters, processing_parameters, cell_range=None):
         """
 
@@ -257,7 +271,7 @@ class RawBackscatterData(BackscatterData):
     _bs_data_columns_regex = r'^(Temp|Vbeam|Cell\d{2}(Amp|SNR)\d{1})$'
 
     # regex string to find acoustic backscatter columns
-    _abs_columns_regex = r'^(Cell\d{2}(Amp|SNR)\d{1})$'
+    _column_regex = r'^(Cell\d{2}(Amp|SNR)\d{1})$'
 
     def __init__(self, data_manager, configuration_parameters, cell_range):
         """
@@ -476,41 +490,18 @@ class MeasuredBackscatterData(ProcessedBackscatterData):
         super().__init__(measured_backscatter_manager, configuration_parameters, processing_parameters, cell_range)
 
         self._backscatter_name = 'Measured backscatter'
-
-    def get_measured_backscatter(self):
-        """
-
-        :return:
-        """
-
-        data = self._data_manager.get_data()
-        measured_backscatter_data = data.filter(regex='^MB\d{3}$')
-        sorted_columns = sorted(measured_backscatter_data.columns)
-        measured_backscatter_data = measured_backscatter_data.reindex_axis(sorted_columns, axis=1)
-
-        return measured_backscatter_data
+        self._column_regex = '^MB\d{3}$'
 
 
 class WaterCorrectedBackscatterData(ProcessedBackscatterData):
 
-    def __init__(self, measured_backscatter):
-        self._configuration_parameters = measured_backscatter.get_configuration_parameters()
-        self._processing_parameters = measured_backscatter.get_processing_parameters()
+    def __init__(self, data_manager, configuration_parameters, processing_parameters, cell_range):
 
-        self._cell_range = measured_backscatter.get_cell_range()
-
-        water_corrected_backscatter_df = self._calc_water_corrected_backscatter(measured_backscatter)
-
-        measured_backscatter_origin = measured_backscatter.get_data_manager().get_origin()
-        water_corrected_backscatter_origin = create_origin_from_data_frame(water_corrected_backscatter_df,
-                                                                           measured_backscatter_origin)
-        water_corrected_backscatter_data_manager = datamanager.DataManager(water_corrected_backscatter_df,
-                                                                           water_corrected_backscatter_origin)
-
-        super().__init__(water_corrected_backscatter_data_manager, self._configuration_parameters,
-                         self._processing_parameters)
+        super().__init__(data_manager, configuration_parameters,
+                         processing_parameters, cell_range)
 
         self._backscatter_name = 'Water corrected backscatter'
+        self._column_regex = '^WCB\d{3}$'
 
     @staticmethod
     def _apply_cell_range_filter(water_corrected_backscatter, cell_range, min_cell_range, max_cell_range):
@@ -526,7 +517,8 @@ class WaterCorrectedBackscatterData(ProcessedBackscatterData):
 
         return water_corrected_backscatter
 
-    def _apply_minwcb_correction(self, water_corrected_backscatter):
+    @staticmethod
+    def _apply_minwcb_correction(water_corrected_backscatter, configuration_parameters, cell_range):
         """Remove the values of the cells including and beyond the cell with the minimum water corrected
         backscatter value.
 
@@ -534,7 +526,7 @@ class WaterCorrectedBackscatterData(ProcessedBackscatterData):
         :return:
         """
 
-        number_of_cells = self._configuration_parameters['Number of Cells']
+        number_of_cells = configuration_parameters['Number of Cells']
 
         # get the column index of the minimum value in each row
         min_wcb_index = np.argmin(water_corrected_backscatter, axis=1)
@@ -548,7 +540,7 @@ class WaterCorrectedBackscatterData(ProcessedBackscatterData):
         flat_index = np.ravel_multi_index(index_array, water_corrected_backscatter.shape)
 
         # get a flat matrix of the cell ranges
-        cell_range_mat = self._cell_range.as_matrix()
+        cell_range_mat = cell_range.as_matrix()
         cell_range_flat = cell_range_mat.flatten()
 
         # create an nobs x ncell array of the range of the minimum values
@@ -683,7 +675,8 @@ class WaterCorrectedBackscatterData(ProcessedBackscatterData):
 
         return water_absorption_loss
 
-    def _calc_water_corrected_backscatter(self, measured_backscatter):
+    @classmethod
+    def _calc_water_corrected_backscatter(cls, measured_backscatter):
         """Calculate water corrected backscatter (WCB).
 
         :return:
@@ -695,34 +688,37 @@ class WaterCorrectedBackscatterData(ProcessedBackscatterData):
 
         cell_range = measured_backscatter.get_cell_range()
         # calculate losses
-        geometric_loss = self._calc_geometric_loss(cell_range.as_matrix(),
-                                                   temperature=temperature.as_matrix(),
-                                                   frequency=configuration_parameters['Frequency'],
-                                                   trans_rad=configuration_parameters[
+        geometric_loss = cls._calc_geometric_loss(cell_range.as_matrix(),
+                                                  temperature=temperature.as_matrix(),
+                                                  frequency=configuration_parameters['Frequency'],
+                                                  trans_rad=configuration_parameters[
                                                                  'Effective Transducer Diameter']/2,
-                                                   nearfield_corr=processing_parameters['Near Field Correction'])
-        water_absorption_loss = self._calc_water_absorption_loss(temperature.as_matrix(),
-                                                                 configuration_parameters['Frequency'],
-                                                                 cell_range.as_matrix())
+                                                  nearfield_corr=processing_parameters['Near Field Correction'])
+        water_absorption_loss = cls._calc_water_absorption_loss(temperature.as_matrix(),
+                                                                configuration_parameters['Frequency'],
+                                                                cell_range.as_matrix())
         two_way_transmission_loss = geometric_loss + water_absorption_loss
 
         # apply the losses to the measured backscatter to get water corrected backscatter
-        measured_backscatter_df = measured_backscatter.get_measured_backscatter()
+        measured_backscatter_df = measured_backscatter.get_backscatter_data()
         water_corrected_backscatter = measured_backscatter_df.as_matrix() + two_way_transmission_loss
 
         # adjust the water corrected backscatter profile
         if processing_parameters['WCB Profile Adjustment']:
-            water_corrected_backscatter = self._apply_minwcb_correction(water_corrected_backscatter)
+            water_corrected_backscatter = cls._apply_minwcb_correction(water_corrected_backscatter,
+                                                                       configuration_parameters,
+                                                                       measured_backscatter.get_cell_range())
 
-        water_corrected_backscatter = self._remove_min_vbeam(water_corrected_backscatter,
-                                                             self._processing_parameters['Minimum Vbeam'])
+        water_corrected_backscatter = cls._remove_min_vbeam(water_corrected_backscatter,
+                                                            measured_backscatter.get_variable('Vbeam'),
+                                                            processing_parameters['Minimum Vbeam'])
 
         min_cell_distance = processing_parameters['Minimum Cell Mid-Point Distance']
         max_cell_distance = processing_parameters['Maximum Cell Mid-Point Distance']
-        water_corrected_backscatter = self._apply_cell_range_filter(water_corrected_backscatter,
-                                                                    cell_range.as_matrix(),
-                                                                    min_cell_distance,
-                                                                    max_cell_distance)
+        water_corrected_backscatter = cls._apply_cell_range_filter(water_corrected_backscatter,
+                                                                   cell_range.as_matrix(),
+                                                                   min_cell_distance,
+                                                                   max_cell_distance)
 
         # create a data frame of the water corrected backscatter observations
         index = temperature.index
@@ -734,16 +730,15 @@ class WaterCorrectedBackscatterData(ProcessedBackscatterData):
 
         return water_corrected_backscatter_df
 
-    def _remove_min_vbeam(self, water_corrected_backscatter, minimum_vbeam):
+    @staticmethod
+    def _remove_min_vbeam(water_corrected_backscatter, vbeam_df, minimum_vbeam):
         """Remove observations that have a vertical beam value that are below the set threshold.
 
         :param water_corrected_backscatter: Water corrected backscatter array
         :return:
         """
 
-        acoustic_df = self._data_manager.get_data()
-
-        vbeam = acoustic_df['Vbeam'].as_matrix()
+        vbeam = vbeam_df['Vbeam'].as_matrix()
 
         index_below_min_vbeam = (vbeam < minimum_vbeam)
 
@@ -751,11 +746,23 @@ class WaterCorrectedBackscatterData(ProcessedBackscatterData):
 
         return water_corrected_backscatter
 
-    def get_water_corrected_backscatter(self):
+    @classmethod
+    def calc_water_corrected_backscatter(cls, measured_backscatter):
+        """Calculate the water corrected backscatter
 
-        data = self._data_manager.get_data()
+        :param measured_backscatter:
+        :return:
+        """
 
-        return data.filter(regex='^WCB\d{3}$')
+        water_corrected_backscatter_df = cls._calc_water_corrected_backscatter(measured_backscatter)
+        water_corrected_backscatter_origin = create_origin_from_data_frame(water_corrected_backscatter_df,
+                                                                           measured_backscatter.get_origin())
+        wcb_data_manager = DataManager(water_corrected_backscatter_df, water_corrected_backscatter_origin)
+        wcb_data_manager = wcb_data_manager.add_data(measured_backscatter.get_variable('Temp'),
+                                                     measured_backscatter.get_variable_origin('Temp'))
+
+        return cls(wcb_data_manager, measured_backscatter.get_configuration_parameters(),
+                   measured_backscatter.get_processing_parameters(), measured_backscatter.get_cell_range())
 
 
 class SedimentCorrectedBackscatterData(ProcessedBackscatterData):
