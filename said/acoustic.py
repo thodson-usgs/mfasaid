@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from advmdata import ADVMParam
-from linearmodel import datamanager
+from linearmodel.datamanager import DataManager
 
 import said.surrogatemodel as surrogatemodel
 from said.plotting import LineStyleGenerator
@@ -136,10 +136,29 @@ class BackscatterData:
 
         return wavelength
 
+    @abc.abstractmethod
+    def add_data(self, other, keep_curr_obs=None):
+        pass
+
+    @abc.abstractmethod
+    def get_cell_range(self):
+        pass
+
+    def get_configuration_parameters(self):
+        return self._configuration_parameters
+
+    def get_data(self):
+        """Returns DataFrame from data_manager"""
+        return self._data_manager.get_data()
+
+    def get_origin(self):
+        """Returns the origin DataFrame from data_manager"""
+        return self._data_manager.get_origin()
+
 
 class ProcessedBackscatterData(BackscatterData):
 
-    def __init__(self, data_manager, configuration_parameters, processing_parameters):
+    def __init__(self, data_manager, configuration_parameters, processing_parameters, cell_range=None):
         """
 
         :param data_manager: DataManager
@@ -150,6 +169,8 @@ class ProcessedBackscatterData(BackscatterData):
         self._data_manager = copy.deepcopy(data_manager)
         self._configuration_parameters = copy.deepcopy(configuration_parameters)
         self._processing_parameters = copy.deepcopy(processing_parameters)
+        self._cell_range = cell_range
+        self._backscatter_name = None
 
     def add_data(self, other, keep_curr_obs=None):
         """
@@ -162,7 +183,7 @@ class ProcessedBackscatterData(BackscatterData):
         if not self._configuration_parameters.is_compatible(other.get_configuration_parameters()) and \
                 self._processing_parameters.is_compatible(other.get_processing_parameters()) and \
                 isinstance(other, type(self)):
-            raise BackscatterDataIncompatibleException("ADVM data sets are incompatible")
+            raise BackscatterDataIncompatibleException("Backscatter data sets are incompatible")
 
         other_data_manager = other.get_data_manager()
 
@@ -170,15 +191,21 @@ class ProcessedBackscatterData(BackscatterData):
 
         return type(self)(combined_data_manager, self._configuration_parameters, self._processing_parameters)
 
-    def get_processing_parameters(self):
-        """
+    def get_cell_range(self):
+        """Returns the cell range"""
+        return self._cell_range
 
-        :return: 
-        """
+    def get_configuration_parameters(self):
+        """Returns a copy of the configuration parameters"""
+        return copy.deepcopy(self._configuration_parameters)
+
+    def get_processing_parameters(self):
+        """Returns a copy of the processing parameters"""
 
         return copy.deepcopy(self._processing_parameters)
 
     def plot(self, index, ax=None):
+        """Plots the backscatter profile"""
 
         data = self._data_manager.get_data()
 
@@ -196,7 +223,7 @@ class ProcessedBackscatterData(BackscatterData):
             marker = line_style_creator.get_marker()
             color = line_style_creator.get_line_color()
 
-            ax.plot(cell_range.ix[i], data.ix[i], ls=line_style, marker=marker, color=color)
+            ax.plot(cell_range, data.ix[i], ls=line_style, marker=marker, color=color)
 
         ax.set_xlabel('Range, in meters')
         ax.set_ylabel(self._backscatter_name + ',\nin decibels')
@@ -204,7 +231,7 @@ class ProcessedBackscatterData(BackscatterData):
         return ax
 
 
-class RawBackscatterData:
+class RawBackscatterData(BackscatterData):
     """Class for managing raw backscatter data"""
 
     # regex string to find ADVM data columns
@@ -213,29 +240,26 @@ class RawBackscatterData:
     # regex string to find acoustic backscatter columns
     _abs_columns_regex = r'^(Cell\d{2}(Amp|SNR)\d{1})$'
 
-    def __init__(self, advm_data):
+    def __init__(self, data_manager, configuration_parameters, cell_range):
         """
 
         :param advm_data:
         """
 
-        advm_data_df = advm_data.get_data()
-        bs_data_df = advm_data_df.filter(regex=self._bs_data_columns_regex)
-        bs_data_origin = create_origin_from_data_frame(bs_data_df, advm_data.get_origin())
-
-        configuration_parameters = advm_data.get_configuration_parameters()
+        self._data_manager = data_manager
         self._configuration_parameters = copy.deepcopy(configuration_parameters)
+        self._cell_range = cell_range
 
     def add_data(self, other, keep_curr_obs=None):
-        """Adds other ADVMData instance to self.
+        """Adds other RawBackscatterData instance to self.
 
-        Throws exception if other ADVMData object is incompatible with self. An exception will be raised if
+        Throws exception if other RawBackscatterData object is incompatible with self. An exception will be raised if
         keep_curr_obs=None and concurrent observations exist for variables.
 
-        :param other: ADVMData object to be added
-        :type other: ADVMData
+        :param other: RawBackscatterData object to be added
+        :type other: RawBackscatterData
         :param keep_curr_obs: {None, True, False} Flag to indicate whether or not to keep current observations.
-        :return: Merged ADVMData object
+        :return: Merged RawBackscatterData object
         """
 
         # test compatibility of other data set
@@ -278,6 +302,33 @@ class RawBackscatterData:
         else:
             return advm_columns
 
+    @classmethod
+    @abc.abstractmethod
+    def from_advm_data(cls, advm_data):
+        pass
+
+    def get_cell_range(self):
+        return self._cell_range
+
+
+class ArgonautRawBackscatterData(RawBackscatterData):
+    """Class for managing raw backscatter data from SonTek Argonauts"""
+
+    @classmethod
+    def from_advm_data(cls, advm_data):
+        """"""
+
+        advm_df = advm_data.get_data()
+        backscatter_df = advm_df.filter(regex=cls._bs_data_columns_regex)
+        backscatter_origin = advm_data.get_origin()
+        backscatter_data_manager = DataManager(backscatter_df, backscatter_origin)
+
+        # apply slant angle correction
+        configuration_parameters = advm_data.get_configuration_parameters()
+        cell_range_df = advm_data.get_cell_range() / configuration_parameters['Slant Angle']
+
+        return cls(backscatter_data_manager, configuration_parameters, cell_range_df)
+
 
 class MeasuredBackscatterData(ProcessedBackscatterData):
 
@@ -301,10 +352,9 @@ class MeasuredBackscatterData(ProcessedBackscatterData):
 
         # create a data manager for the measured backscatter data
         raw_backscatter_data_origin = raw_backscatter_data.get_data_manager().get_origin()
-        measured_backscatter_origin = self._create_origin_from_data_frame(measured_backscatter_data,
-                                                                          raw_backscatter_data_origin)
-        measured_backscatter_manager = datamanager.DataManager(measured_backscatter_data,
-                                                               measured_backscatter_origin)
+        measured_backscatter_origin = create_origin_from_data_frame(measured_backscatter_data,
+                                                                    raw_backscatter_data_origin)
+        measured_backscatter_manager = DataManager(measured_backscatter_data, measured_backscatter_origin)
 
         super().__init__(measured_backscatter_manager, configuration_parameters, processing_parameters)
 
