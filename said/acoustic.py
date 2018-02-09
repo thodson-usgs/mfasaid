@@ -153,9 +153,14 @@ class BackscatterData:
 
         return backscatter_data
 
-    @abc.abstractmethod
     def get_cell_range(self):
-        pass
+        """Returns the cell range"""
+        if self._cell_range is None:
+            cell_range = None
+        else:
+            sorted_columns = sorted(self._cell_range.columns)
+            cell_range = self._cell_range.reindex_axis(sorted_columns, axis=1)
+        return cell_range
 
     def get_configuration_parameters(self):
         return self._configuration_parameters
@@ -186,10 +191,9 @@ class BackscatterData:
         return self._data_manager.get_variable_origin(variable_name)
 
 
-class ProcessedBackscatterData(BackscatterData):
+class ProcessedData:
 
-    @abc.abstractmethod
-    def __init__(self, data_manager, configuration_parameters, processing_parameters, cell_range=None):
+    def __init__(self, data_manager, configuration_parameters, processing_parameters, cell_range=None, data_name=None):
         """
 
         :param data_manager: DataManager
@@ -201,14 +205,14 @@ class ProcessedBackscatterData(BackscatterData):
         self._configuration_parameters = copy.deepcopy(configuration_parameters)
         self._processing_parameters = copy.deepcopy(processing_parameters)
         self._cell_range = cell_range
-        self._backscatter_name = None
+        self._data_name = data_name
 
     def add_data(self, other, keep_curr_obs=None):
         """
 
         :param other: ProcessedADVMSedimentData
-        :param keep_curr_obs: 
-        :return: 
+        :param keep_curr_obs:
+        :return:
         """
 
         if not self._configuration_parameters.is_compatible(other.get_configuration_parameters()) and \
@@ -222,12 +226,6 @@ class ProcessedBackscatterData(BackscatterData):
 
         return type(self)(combined_data_manager, self._configuration_parameters, self._processing_parameters)
 
-    def get_cell_range(self):
-        """Returns the cell range"""
-        sorted_columns = sorted(self._cell_range.columns)
-        cell_range = self._cell_range.reindex_axis(sorted_columns, axis=1)
-        return cell_range
-
     def get_configuration_parameters(self):
         """Returns a copy of the configuration parameters"""
         return copy.deepcopy(self._configuration_parameters)
@@ -236,6 +234,9 @@ class ProcessedBackscatterData(BackscatterData):
         """Returns a copy of the processing parameters"""
 
         return copy.deepcopy(self._processing_parameters)
+
+
+class ProcessedBackscatterData(ProcessedData, BackscatterData):
 
     def plot(self, index, ax=None):
         """Plots the backscatter profile"""
@@ -343,9 +344,6 @@ class RawBackscatterData(BackscatterData):
     @abc.abstractmethod
     def from_advm_data(cls, advm_data):
         pass
-
-    def get_cell_range(self):
-        return self._cell_range
 
 
 class ArgonautRawBackscatterData(RawBackscatterData):
@@ -765,34 +763,14 @@ class WaterCorrectedBackscatterData(ProcessedBackscatterData):
                    measured_backscatter.get_processing_parameters(), measured_backscatter.get_cell_range())
 
 
-class SedimentCorrectedBackscatterData(ProcessedBackscatterData):
+class SedimentAttenuationCoefficient(ProcessedData):
 
-    def __init__(self, water_corrected_backscatter):
-
-        wcb_df = water_corrected_backscatter.get_water_corrected_backscatter()
-
-        sediment_attenuation_coefficient = self._calc_sediment_attenuation_coefficient(wcb_df)
-        sediment_corrected_backscatter_df = self._calc_sediment_corrected_backscatter(wcb_df,
-                                                                                      sediment_attenuation_coefficient)
-
-        water_corrected_backscatter_origin = water_corrected_backscatter.get_data_manager().get_origin()
-        data_manager = self._create_origin_from_data_frame(sediment_corrected_backscatter_df,
-                                                           water_corrected_backscatter_origin)
-        configuration_parameters = water_corrected_backscatter.get_configuration_parameters()
-        processing_parameters = water_corrected_backscatter.get_processing_parameters()
-
-        super().__init__(data_manager, configuration_parameters, processing_parameters)
-
-        self._backscatter_name = 'Sediment corrected backscatter'
-        self._sediment_attenuation_coefficient = sediment_attenuation_coefficient
-
-    def _calc_sediment_attenuation_coefficient(self, water_corrected_backscatter):
+    @staticmethod
+    def _calc_sediment_attenuation_coefficient(water_corrected_backscatter, cell_range):
         """Calculate the sediment attenuation coefficient (SAC) in dB/m.
 
         :return: sac array
         """
-
-        cell_range = self.get_cell_range()
 
         wcb = water_corrected_backscatter.as_matrix()
         cell_range = cell_range.as_matrix()
@@ -832,7 +810,38 @@ class SedimentCorrectedBackscatterData(ProcessedBackscatterData):
 
         return sac_series
 
-    def _calc_sediment_corrected_backscatter(self, water_corrected_backscatter, sediment_attenuation_coefficient):
+    @classmethod
+    def calc_sediment_attenuation_coefficient(cls, water_corrected_backscatter):
+        """Calculates the sediment attenuation coefficient
+
+        :param water_corrected_backscatter:
+        :return:
+        """
+
+        wcb_df = water_corrected_backscatter.get_water_corrected_backscatter()
+        cell_range_df = water_corrected_backscatter.get_cell_range()
+
+        sediment_attenuation_coefficient = cls._calc_sediment_attenuation_coefficient(wcb_df, cell_range_df)
+        sac_origin = create_origin_from_data_frame(sediment_attenuation_coefficient,
+                                                   water_corrected_backscatter.get_origin())
+        sac_data_manager = DataManager(sediment_attenuation_coefficient, sac_origin)
+
+        return cls(sac_data_manager, water_corrected_backscatter.get_configuration_parameters(),
+                   water_corrected_backscatter.get_processing_parameters())
+
+
+class SedimentCorrectedBackscatterData(ProcessedBackscatterData):
+
+    def __init__(self, data_manager, configuration_parameters, processing_parameters, cell_range):
+
+        super().__init__(data_manager, configuration_parameters, processing_parameters, cell_range)
+
+        self._column_regex = '^SCB\d{3}$'
+        self._backscatter_name = 'Sediment corrected backscatter'
+
+    @classmethod
+    def _calc_sediment_corrected_backscatter(cls, water_corrected_backscatter, sediment_attenuation_coefficient,
+                                             configuration_parameters, cell_range):
         """
 
         :return:
@@ -841,7 +850,7 @@ class SedimentCorrectedBackscatterData(ProcessedBackscatterData):
         water_corrected_backscatter_df = water_corrected_backscatter.get_water_corrected_backscatter()
         wcb = water_corrected_backscatter_df.as_matrix()
         sac = sediment_attenuation_coefficient.as_matrix()
-        cell_range = self.get_cell_range().as_matrix()
+        cell_range = cell_range.as_matrix()
 
         try:
             scb = wcb + 2 * np.tile(sac, (1, cell_range.shape[1])) * cell_range
@@ -849,12 +858,12 @@ class SedimentCorrectedBackscatterData(ProcessedBackscatterData):
             sac = np.expand_dims(sac, axis=1)
             scb = wcb + 2 * np.tile(sac, (1, cell_range.shape[1])) * cell_range
 
-        scb = self._single_cell_wcb_correction(wcb, scb)
+        scb = cls._single_cell_wcb_correction(wcb, scb)
 
         # create DateFrame to return
         index = water_corrected_backscatter.index
         scb_columns = ['SCB{:03}'.format(cell) for cell
-                       in range(1, self._configuration_parameters['Number of Cells'] + 1)]
+                       in range(1, configuration_parameters['Number of Cells'] + 1)]
         scb_df = pd.DataFrame(index=index, data=scb, columns=scb_columns)
 
         return scb_df
@@ -876,7 +885,7 @@ class SedimentCorrectedBackscatterData(ProcessedBackscatterData):
 
         return sediment_corrected_backscatter
 
-    def calculate_sediment_attenuation_coefficient(self):
+    def calc_sediment_attenuation_coefficient(self):
         """
         
         :return: 
@@ -885,20 +894,34 @@ class SedimentCorrectedBackscatterData(ProcessedBackscatterData):
         return ProcessedData(self._sediment_attenuation_coefficient, self.get_configuration_parameters(),
                              self.get_processing_parameters())
 
-    def get_data(self):
+    @classmethod
+    def calc_sediment_corrected_backscatter(cls, water_corrected_backscatter):
+        """Calculate the sediment corrected backscatter from the water corrected backscatter
+
+        :param water_corrected_backscatter:
+        :return:
         """
-        
-        :return: 
-        """
 
-        return self.get_water_corrected_backscatter()
+        wcb_df = water_corrected_backscatter.get_water_corrected_backscatter()
+        cell_range_df = water_corrected_backscatter.get_cell_range()
 
-    def get_sediment_corrected_backscatter(self):
+        sediment_attenuation_coefficient = cls._calc_sediment_attenuation_coefficient(wcb_df, cell_range_df)
 
-        data = self._data_manager.get_data()
-        return data.filter(regex='^SCB\d{3}$')
+        configuration_parameters = water_corrected_backscatter.get_configuration_parameters()
+        sediment_corrected_backscatter_df = cls._calc_sediment_corrected_backscatter(wcb_df,
+                                                                                     sediment_attenuation_coefficient,
+                                                                                     configuration_parameters,
+                                                                                     cell_range_df)
 
-    def calculate_mean_sediment_corrected_backscatter(self):
+        water_corrected_backscatter_origin = water_corrected_backscatter.get_data_manager().get_origin()
+        data_manager = create_origin_from_data_frame(sediment_corrected_backscatter_df,
+                                                     water_corrected_backscatter_origin)
+
+        return cls(data_manager, water_corrected_backscatter.get_configuration_parameters(),
+                   water_corrected_backscatter.get_processing_parameters(),
+                   water_corrected_backscatter.get_cell_range())
+
+    def calc_mean_sediment_corrected_backscatter(self):
         """
 
         :return:
@@ -908,8 +931,8 @@ class SedimentCorrectedBackscatterData(ProcessedBackscatterData):
 
         mean_sediment_corrected_backscatter = pd.DataFrame(sediment_corrected_backscatter.mean(axis=1),
                                                            columns=['MeanSCB'], dtype=np.float)
-        data_origin = self._create_origin_from_data_frame(mean_sediment_corrected_backscatter)
-        data_manager = datamanager.DataManager(mean_sediment_corrected_backscatter, data_origin)
+        data_origin = create_origin_from_data_frame(mean_sediment_corrected_backscatter)
+        data_manager = DataManager(mean_sediment_corrected_backscatter, data_origin)
 
         return ProcessedData(data_manager, self.get_configuration_parameters(), self.get_processing_parameters())
 
@@ -951,9 +974,9 @@ class ADVMBackscatterDataProcessor:
             SedimentCorrectedBackscatterData(self._water_corrected_backscatter_data)
 
         sediment_attenuation_coefficient = \
-            self._sediment_corrected_backscatter_data.calculate_sediment_attenuation_coefficient()
+            self._sediment_corrected_backscatter_data.calc_sediment_attenuation_coefficient()
         mean_sediment_corrected_backscatter = \
-            self._sediment_corrected_backscatter_data.calculate_mean_sediment_corrected_backscatter()
+            self._sediment_corrected_backscatter_data.calc_mean_sediment_corrected_backscatter()
 
         self._acoustic_parameters = sediment_attenuation_coefficient.add_data(mean_sediment_corrected_backscatter)
 
