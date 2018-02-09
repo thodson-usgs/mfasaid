@@ -22,7 +22,7 @@ def create_origin_from_data_frame(acoustic_df, data_origin):
     new_data_origin = pd.DataFrame(columns=['variable', 'origin'])
 
     for source in data_sources:
-        tmp_origin = datamanager.DataManager.create_data_origin(acoustic_df, source)
+        tmp_origin = DataManager.create_data_origin(acoustic_df, source)
         new_data_origin = new_data_origin.append(tmp_origin)
 
     new_data_origin.reset_index(drop=True, inplace=True)
@@ -155,6 +155,23 @@ class BackscatterData:
         """Returns the origin DataFrame from data_manager"""
         return self._data_manager.get_origin()
 
+    def get_variable(self, variable_name):
+        """Returns the observations of a variable
+
+        :param variable_name:
+        :return:
+        """
+        return self._data_manager.get_variable(variable_name)
+
+    def get_variable_origin(self, variable_name):
+        """Returns the origin of a given variable
+
+        :param variable_name: String of variable name
+        :return: List containing origin information for the given variable
+        """
+
+        return self._data_manager.get_variable_origin(variable_name)
+
 
 class ProcessedBackscatterData(BackscatterData):
 
@@ -193,7 +210,9 @@ class ProcessedBackscatterData(BackscatterData):
 
     def get_cell_range(self):
         """Returns the cell range"""
-        return self._cell_range
+        sorted_columns = sorted(self._cell_range.columns)
+        cell_range = self._cell_range.reindex_axis(sorted_columns, axis=1)
+        return cell_range
 
     def get_configuration_parameters(self):
         """Returns a copy of the configuration parameters"""
@@ -277,6 +296,10 @@ class RawBackscatterData(BackscatterData):
 
         return type(self)(combined_data_manager, self._configuration_parameters)
 
+    @abc.abstractmethod
+    def calc_measured_backscatter(self, processing_parameters):
+        pass
+
     @classmethod
     def find_advm_variable_names(cls, df):
         """Finds and return a list of ADVM variables contained within a dataframe.
@@ -314,53 +337,7 @@ class RawBackscatterData(BackscatterData):
 class ArgonautRawBackscatterData(RawBackscatterData):
     """Class for managing raw backscatter data from SonTek Argonauts"""
 
-    @classmethod
-    def from_advm_data(cls, advm_data):
-        """"""
-
-        advm_df = advm_data.get_data()
-        backscatter_df = advm_df.filter(regex=cls._bs_data_columns_regex)
-        backscatter_origin = advm_data.get_origin()
-        backscatter_data_manager = DataManager(backscatter_df, backscatter_origin)
-
-        # apply slant angle correction
-        configuration_parameters = advm_data.get_configuration_parameters()
-        cell_range_df = advm_data.get_cell_range() / configuration_parameters['Slant Angle']
-
-        return cls(backscatter_data_manager, configuration_parameters, cell_range_df)
-
-
-class MeasuredBackscatterData(ProcessedBackscatterData):
-
-    def __init__(self, raw_backscatter_data, processing_parameters):
-        """
-
-        :param raw_backscatter_data:
-        :param processing_parameters:
-        """
-
-        # calculate measured backscatter
-        raw_data_df = raw_backscatter_data.get_data()
-        configuration_parameters = raw_backscatter_data.get_configuration_parameters()
-        measured_backscatter_data = self._calc_measured_backscatter(
-            raw_data_df, configuration_parameters, processing_parameters)
-
-        # add temperature and vertical beam data to the measured backscatter data
-        temperature_data = raw_backscatter_data.get_variable('Temp')
-        vertical_beam_data = raw_backscatter_data.get_variable('Vbeam')
-        measured_backscatter_data = pd.concat([temperature_data, vertical_beam_data, measured_backscatter_data], axis=1)
-
-        # create a data manager for the measured backscatter data
-        raw_backscatter_data_origin = raw_backscatter_data.get_data_manager().get_origin()
-        measured_backscatter_origin = create_origin_from_data_frame(measured_backscatter_data,
-                                                                    raw_backscatter_data_origin)
-        measured_backscatter_manager = DataManager(measured_backscatter_data, measured_backscatter_origin)
-
-        super().__init__(measured_backscatter_manager, configuration_parameters, processing_parameters)
-
-        self._backscatter_name = 'Measured backscatter'
-
-    def _calc_measured_backscatter(self, raw_data_df, configuration_parameters, processing_parameters):
+    def _calc_measured_backscatter(self, acoustic_df, configuration_parameters, processing_parameters):
         """Calculate measured backscatter values based on processing parameters.
 
         :return:
@@ -383,7 +360,7 @@ class MeasuredBackscatterData(ProcessedBackscatterData):
             number_of_beams = configuration_parameters['Number of Beams']
 
             for beam_number in range(1, number_of_beams + 1):
-                beam_backscatter_df = self._get_mb_array(raw_data_df, backscatter_values, beam_number, number_of_cells)
+                beam_backscatter_df = self._get_mb_array(acoustic_df, backscatter_values, beam_number, number_of_cells)
 
                 backscatter_list.append(beam_backscatter_df)
 
@@ -397,7 +374,7 @@ class MeasuredBackscatterData(ProcessedBackscatterData):
         # otherwise, get the backscatter from the single beam
         else:
 
-            backscatter_df = self._get_mb_array(raw_data_df, backscatter_values, beam_number, number_of_cells)
+            backscatter_df = self._get_mb_array(acoustic_df, backscatter_values, beam_number, number_of_cells)
 
         # if Amp is selected, apply the intensity scale factor to the backscatter values
         if backscatter_values == 'Amp':
@@ -444,6 +421,62 @@ class MeasuredBackscatterData(ProcessedBackscatterData):
 
         return mb_df
 
+    def calc_measured_backscatter(self, processing_parameters):
+        """Returns the measured backscatter based on requirements in processing_parameters.
+
+        :param processing_parameters:
+        :return:
+        """
+
+        # get the measured backscatter data
+        measured_backscatter_df = self._calc_measured_backscatter(self._data_manager.get_data(),
+                                                                  self._configuration_parameters,
+                                                                  processing_parameters)
+
+        # add the vertical beam and temperature data
+        measured_backscatter_origin = create_origin_from_data_frame(measured_backscatter_df,
+                                                                    self._data_manager.get_origin())
+        measured_backscatter_data_manager = DataManager(measured_backscatter_df, measured_backscatter_origin)
+        measured_backscatter_data_manager = measured_backscatter_data_manager.add_data(self.get_variable('Temp'),
+                                                                                       self.get_variable_origin('Temp'))
+        measured_backscatter_data_manager = \
+            measured_backscatter_data_manager.add_data(self.get_variable('Vbeam'), self.get_variable_origin('Vbeam'))
+
+        return MeasuredBackscatterData(measured_backscatter_data_manager,
+                                       self._configuration_parameters,
+                                       processing_parameters,
+                                       self.get_cell_range())
+
+    @classmethod
+    def from_advm_data(cls, advm_data):
+        """"""
+
+        advm_df = advm_data.get_data()
+        backscatter_df = advm_df.filter(regex=cls._bs_data_columns_regex)
+        backscatter_origin = advm_data.get_origin()
+        backscatter_data_manager = DataManager(backscatter_df, backscatter_origin)
+
+        # apply slant angle correction
+        configuration_parameters = advm_data.get_configuration_parameters()
+        cell_range_df = advm_data.get_cell_range() / configuration_parameters['Slant Angle']
+
+        return cls(backscatter_data_manager, configuration_parameters, cell_range_df)
+
+
+class MeasuredBackscatterData(ProcessedBackscatterData):
+
+    def __init__(self, measured_backscatter_manager, configuration_parameters, processing_parameters, cell_range):
+        """
+
+        :param measured_backscatter_manager:
+        :param configuration_parameters:
+        :param processing_parameters:
+        """
+
+        super().__init__(measured_backscatter_manager, configuration_parameters, processing_parameters, cell_range)
+
+        self._backscatter_name = 'Measured backscatter'
+
     def get_measured_backscatter(self):
         """
 
@@ -451,8 +484,11 @@ class MeasuredBackscatterData(ProcessedBackscatterData):
         """
 
         data = self._data_manager.get_data()
+        measured_backscatter_data = data.filter(regex='^MB\d{3}$')
+        sorted_columns = sorted(measured_backscatter_data.columns)
+        measured_backscatter_data = measured_backscatter_data.reindex_axis(sorted_columns, axis=1)
 
-        return data.filter(regex='^MB\d{3}$')
+        return measured_backscatter_data
 
 
 class WaterCorrectedBackscatterData(ProcessedBackscatterData):
@@ -466,8 +502,8 @@ class WaterCorrectedBackscatterData(ProcessedBackscatterData):
         water_corrected_backscatter_df = self._calc_water_corrected_backscatter(measured_backscatter)
 
         measured_backscatter_origin = measured_backscatter.get_data_manager().get_origin()
-        water_corrected_backscatter_origin = self._create_origin_from_data_frame(water_corrected_backscatter_df,
-                                                                                 measured_backscatter_origin)
+        water_corrected_backscatter_origin = create_origin_from_data_frame(water_corrected_backscatter_df,
+                                                                           measured_backscatter_origin)
         water_corrected_backscatter_data_manager = datamanager.DataManager(water_corrected_backscatter_df,
                                                                            water_corrected_backscatter_origin)
 
