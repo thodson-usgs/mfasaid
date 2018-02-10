@@ -230,6 +230,10 @@ class ProcessedData:
         """Returns a copy of the configuration parameters"""
         return copy.deepcopy(self._configuration_parameters)
 
+    def get_data(self):
+        """Returns DataFrame from data_manager"""
+        return self._data_manager.get_data()
+
     def get_processing_parameters(self):
         """Returns a copy of the processing parameters"""
 
@@ -470,7 +474,8 @@ class ArgonautRawBackscatterData(RawBackscatterData):
 
         # apply slant angle correction
         configuration_parameters = advm_data.get_configuration_parameters()
-        cell_range_df = advm_data.get_cell_range() / configuration_parameters['Slant Angle']
+        slant_angle = configuration_parameters['Slant Angle']
+        cell_range_df = advm_data.get_cell_range() / np.cos(np.radians(slant_angle))
 
         return cls(backscatter_data_manager, configuration_parameters, cell_range_df)
 
@@ -685,6 +690,7 @@ class WaterCorrectedBackscatterData(ProcessedBackscatterData):
         processing_parameters = measured_backscatter.get_processing_parameters()
 
         cell_range = measured_backscatter.get_cell_range()
+
         # calculate losses
         geometric_loss = cls._calc_geometric_loss(cell_range.as_matrix(),
                                                   temperature=temperature.as_matrix(),
@@ -746,7 +752,7 @@ class WaterCorrectedBackscatterData(ProcessedBackscatterData):
 
     @classmethod
     def calc_water_corrected_backscatter(cls, measured_backscatter):
-        """Calculate the water corrected backscatter
+        """Calculate the water corrected backscatter from the measured backscatter
 
         :param measured_backscatter:
         :return:
@@ -818,7 +824,7 @@ class SedimentAttenuationCoefficient(ProcessedData):
         :return:
         """
 
-        wcb_df = water_corrected_backscatter.get_water_corrected_backscatter()
+        wcb_df = water_corrected_backscatter.get_backscatter_data()
         cell_range_df = water_corrected_backscatter.get_cell_range()
 
         sediment_attenuation_coefficient = cls._calc_sediment_attenuation_coefficient(wcb_df, cell_range_df)
