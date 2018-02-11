@@ -220,9 +220,12 @@ class ProcessedData:
                 isinstance(other, type(self)):
             raise BackscatterDataIncompatibleException("Backscatter data sets are incompatible")
 
-        other_data_manager = other.get_data_manager()
+        # other_data_manager = other.get_data_manager()
+        other_data = other.get_data()
+        other_origin = other.get_origin()
+        other_data_manager = DataManager(other_data, other_origin)
 
-        combined_data_manager = self._data_manager.add_data(other_data_manager, keep_curr_obs=keep_curr_obs)
+        combined_data_manager = self._data_manager.add_data_manager(other_data_manager, keep_curr_obs=keep_curr_obs)
 
         return type(self)(combined_data_manager, self._configuration_parameters, self._processing_parameters)
 
@@ -233,6 +236,10 @@ class ProcessedData:
     def get_data(self):
         """Returns DataFrame from data_manager"""
         return self._data_manager.get_data()
+
+    def get_origin(self):
+        """Returns the origin of the variables"""
+        return self._data_manager.get_origin()
 
     def get_processing_parameters(self):
         """Returns a copy of the processing parameters"""
@@ -309,9 +316,9 @@ class RawBackscatterData(BackscatterData):
         other_data = other.get_data()
         other_origin = other.get_origin()
 
-        other_data_manager = datamanager.DataManager(other_data, other_origin)
+        other_data_manager = DataManager(other_data, other_origin)
 
-        combined_data_manager = self._data_manager.add_data(other_data_manager, keep_curr_obs=keep_curr_obs)
+        combined_data_manager = self._data_manager.add_data_manager(other_data_manager, keep_curr_obs=keep_curr_obs)
 
         return type(self)(combined_data_manager, self._configuration_parameters)
 
@@ -894,15 +901,6 @@ class SedimentCorrectedBackscatterData(ProcessedBackscatterData):
 
         return sediment_corrected_backscatter
 
-    def calc_sediment_attenuation_coefficient(self):
-        """
-        
-        :return: 
-        """
-
-        return ProcessedData(self._sediment_attenuation_coefficient, self.get_configuration_parameters(),
-                             self.get_processing_parameters())
-
     @classmethod
     def calc_sediment_corrected_backscatter(cls, water_corrected_backscatter, sediment_attenuation_coefficient):
         """Calculate the sediment corrected backscatter from the water corrected backscatter
@@ -958,10 +956,11 @@ class ADVMBackscatterDataProcessor:
         :type raw_advm_backscatter_data: RawBackscatterData
         """
 
-        self._raw_advm_backscatter_data = copy.deepcopy(raw_advm_backscatter_data)
+        self._raw_backscatter_data = raw_advm_backscatter_data
 
         self._measured_backscatter_data = None
         self._water_corrected_backscatter_data = None
+        self._sediment_attenuation_coefficient = None
         self._sediment_corrected_backscatter_data = None
 
         if processing_parameters is not None:
@@ -979,28 +978,31 @@ class ADVMBackscatterDataProcessor:
         :return: 
         """
 
-        self._measured_backscatter_data = MeasuredBackscatterData(self._raw_advm_backscatter_data,
-                                                                  processing_parameters)
-        self._water_corrected_backscatter_data = WaterCorrectedBackscatterData(self._measured_backscatter_data)
+        # calculate sediment attenuation coefficient and mean sediment corrected backscatter
+        self._measured_backscatter_data = self._raw_backscatter_data.calc_measured_backscatter(processing_parameters)
+        self._water_corrected_backscatter_data = \
+            WaterCorrectedBackscatterData.calc_water_corrected_backscatter(self._measured_backscatter_data)
+        self._sediment_attenuation_coefficient = \
+            SedimentAttenuationCoefficient.calc_sediment_attenuation_coefficient(self._water_corrected_backscatter_data)
         self._sediment_corrected_backscatter_data = \
-            SedimentCorrectedBackscatterData(self._water_corrected_backscatter_data)
+            SedimentCorrectedBackscatterData.calc_sediment_corrected_backscatter(self._water_corrected_backscatter_data,
+                                                                                 self._sediment_attenuation_coefficient)
 
-        sediment_attenuation_coefficient = \
-            self._sediment_corrected_backscatter_data.calc_sediment_attenuation_coefficient()
         mean_sediment_corrected_backscatter = \
             self._sediment_corrected_backscatter_data.calc_mean_sediment_corrected_backscatter()
 
-        self._acoustic_parameters = sediment_attenuation_coefficient.add_data(mean_sediment_corrected_backscatter)
+        # add the sediment corrected backscatter to the
+        self._acoustic_parameters = self._sediment_attenuation_coefficient.add_data(mean_sediment_corrected_backscatter)
 
-        return copy.deepcopy(self._acoustic_parameters)
+        return self._acoustic_parameters
 
     def get_acoustic_parameters(self):
 
-        return copy.deepcopy(self._acoustic_parameters)
+        return self._acoustic_parameters
 
     def get_configuration_parameters(self):
 
-        return self._raw_advm_backscatter_data.get_configuration_parameters()
+        return self._raw_backscatter_data.get_configuration_parameters()
 
     def get_data(self):
         """
@@ -1008,7 +1010,12 @@ class ADVMBackscatterDataProcessor:
         :return:
         """
 
-        return self._acoustic_parameters.get_data()
+        if self._acoustic_parameters is None:
+            data = None
+        else:
+            data = self._acoustic_parameters.get_data()
+
+        return data
 
     def get_processing_parameters(self):
 
@@ -1092,19 +1099,6 @@ class ADVMBackscatterDataProcessor:
             fig = None
 
         return fig
-
-    @classmethod
-    def read_argonaut_data(cls, data_directory, filename):
-        """
-        
-        :param data_directory: 
-        :param filename: 
-        :return: 
-        """
-
-        raw_advm_backscatter_data = RawBackscatterData.read_argonaut_data(data_directory, filename)
-
-        return cls(raw_advm_backscatter_data)
 
 
 class BackscatterRatingModel(surrogatemodel.SurrogateRatingModel):
