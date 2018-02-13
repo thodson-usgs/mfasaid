@@ -149,7 +149,7 @@ class BackscatterData:
         data = self._data_manager.get_data()
         backscatter_data = data.filter(regex=self._column_regex)
         sorted_columns = sorted(backscatter_data.columns)
-        backscatter_data = backscatter_data.reindex_axis(sorted_columns, axis=1)
+        backscatter_data = backscatter_data.reindex(sorted_columns, axis=1)
 
         return backscatter_data
 
@@ -159,7 +159,7 @@ class BackscatterData:
             cell_range = None
         else:
             sorted_columns = sorted(self._cell_range.columns)
-            cell_range = self._cell_range.reindex_axis(sorted_columns, axis=1)
+            cell_range = self._cell_range.reindex(sorted_columns, axis=1)
         return cell_range
 
     def get_configuration_parameters(self):
@@ -252,7 +252,7 @@ class ProcessedBackscatterData(ProcessedData, BackscatterData):
     def plot(self, index, ax=None):
         """Plots the backscatter profile"""
 
-        data = self._data_manager.get_data()
+        data = self.get_backscatter_data()
 
         if ax is None:
             fig = plt.figure()
@@ -268,10 +268,11 @@ class ProcessedBackscatterData(ProcessedData, BackscatterData):
             marker = line_style_creator.get_marker()
             color = line_style_creator.get_line_color()
 
-            ax.plot(cell_range, data.ix[i], ls=line_style, marker=marker, color=color)
+            ax.plot(cell_range.ix[i], data.ix[i], ls=line_style, marker=marker, color=color)
 
         ax.set_xlabel('Range, in meters')
-        ax.set_ylabel(self._backscatter_name + ',\nin decibels')
+        if self._data_name is not None:
+            ax.set_ylabel(self._data_name + ',\nin decibels')
 
         return ax
 
@@ -499,7 +500,7 @@ class MeasuredBackscatterData(ProcessedBackscatterData):
 
         super().__init__(measured_backscatter_manager, configuration_parameters, processing_parameters, cell_range)
 
-        self._backscatter_name = 'Measured backscatter'
+        self._data_name = 'Measured backscatter'
         self._column_regex = '^MB\d{3}$'
 
 
@@ -510,7 +511,7 @@ class WaterCorrectedBackscatterData(ProcessedBackscatterData):
         super().__init__(data_manager, configuration_parameters,
                          processing_parameters, cell_range)
 
-        self._backscatter_name = 'Water corrected backscatter'
+        self._data_name = 'Water corrected backscatter'
         self._column_regex = '^WCB\d{3}$'
 
     @staticmethod
@@ -854,7 +855,7 @@ class SedimentCorrectedBackscatterData(ProcessedBackscatterData):
         super().__init__(data_manager, configuration_parameters, processing_parameters, cell_range)
 
         self._column_regex = '^SCB\d{3}$'
-        self._backscatter_name = 'Sediment corrected backscatter'
+        self._data_name = 'Sediment corrected backscatter'
 
     @classmethod
     def _calc_sediment_corrected_backscatter(cls, water_corrected_backscatter_df, sediment_attenuation_coefficient,
