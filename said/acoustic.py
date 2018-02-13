@@ -192,6 +192,8 @@ class BackscatterData:
 
 
 class ProcessedData:
+    # TODO: Create a parent class for the interface for a dataset within a surrogate model.
+    # Many methods are required for model.SurrogateModel
 
     def __init__(self, data_manager, configuration_parameters, processing_parameters, cell_range=None, data_name=None):
         """
@@ -245,6 +247,31 @@ class ProcessedData:
         """Returns a copy of the processing parameters"""
 
         return copy.deepcopy(self._processing_parameters)
+
+    def get_variable_names(self):
+        """Returns the name of the contained variables"""
+
+        return self._data_manager.get_variable_names()
+
+    def get_variable_observation(self, variable_name, time, time_window_width=0, match_method='nearest'):
+        """Returns an observed value of a variable for a given time
+
+        :param variable_name:
+        :param time:
+        :param time_window_width:
+        :param match_method:
+        :return:
+        """
+        self._data_manager.get_variable_observation(variable_name, time, time_window_width, match_method)
+
+    def get_variable_origin(self, variable_name):
+        """Returns the origin information of a variable
+
+        :param variable_name:
+        :return:
+        """
+
+        return self._data_manager.get_variable_origin(variable_name)
 
 
 class ProcessedBackscatterData(ProcessedData, BackscatterData):
@@ -992,8 +1019,13 @@ class ADVMBackscatterDataProcessor:
         mean_sediment_corrected_backscatter = \
             self._sediment_corrected_backscatter_data.calc_mean_sediment_corrected_backscatter()
 
+        mean_scb_data_origin = create_origin_from_data_frame(mean_sediment_corrected_backscatter.get_data(),
+                                                             self._sediment_corrected_backscatter_data.get_origin())
+        acoustic_parameter_dm = DataManager(mean_sediment_corrected_backscatter.get_data(), mean_scb_data_origin)
+
         # add the sediment corrected backscatter to the
-        self._acoustic_parameters = self._sediment_attenuation_coefficient.add_data(mean_sediment_corrected_backscatter)
+        self._acoustic_parameters = acoustic_parameter_dm.add_data(self._sediment_attenuation_coefficient.get_sac(),
+                                                                   self._sediment_attenuation_coefficient.get_origin())
 
         return self._acoustic_parameters
 
