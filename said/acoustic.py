@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from advmdata import ADVMParam
+from advmdata.core import ADVMParam
 from linearmodel.datamanager import DataManager
 
 import said.surrogatemodel as surrogatemodel
