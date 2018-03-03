@@ -75,7 +75,3 @@ dependencies:
   - wincertstore=0.2=py36h7fe50ca_0
   - winpty=0.4.3=4
   - zlib=1.2.11=h8395fce_2
-  - pip:
-    - advmdata==0.0.0.dev1
-    - linearmodel==0.0.0.dev1
-
