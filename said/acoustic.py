@@ -323,71 +323,6 @@ class RawBackscatterData(BackscatterData):
         self._configuration_parameters = copy.deepcopy(configuration_parameters)
         self._cell_range = cell_range
 
-    def add_data(self, other, keep_curr_obs=None):
-        """Adds other RawBackscatterData instance to self.
-
-        Throws exception if other RawBackscatterData object is incompatible with self. An exception will be raised if
-        keep_curr_obs=None and concurrent observations exist for variables.
-
-        :param other: RawBackscatterData object to be added
-        :type other: RawBackscatterData
-        :param keep_curr_obs: {None, True, False} Flag to indicate whether or not to keep current observations.
-        :return: Merged RawBackscatterData object
-        """
-
-        # test compatibility of other data set
-        if not self._configuration_parameters.is_compatible(other.get_configuration_parameters()) and \
-                isinstance(other, type(self)):
-
-            raise BackscatterDataIncompatibleException("ADVM data sets are incompatible")
-
-        other_data = other.get_data()
-        other_origin = other.get_origin()
-
-        other_data_manager = DataManager(other_data, other_origin)
-
-        combined_data_manager = self._data_manager.add_data_manager(other_data_manager, keep_curr_obs=keep_curr_obs)
-
-        return type(self)(combined_data_manager, self._configuration_parameters)
-
-    @abc.abstractmethod
-    def calc_measured_backscatter(self, processing_parameters):
-        pass
-
-    @classmethod
-    def find_advm_variable_names(cls, df):
-        """Finds and return a list of ADVM variables contained within a dataframe.
-
-        :param df:
-        :return:
-        """
-
-        # compile regular expression pattern
-        advm_columns_pattern = re.compile(cls._bsdata_columns_regex)
-
-        # create empty list to hold column names
-        advm_columns = []
-
-        # find the acoustic backscatter column names within the DataFrame
-        for column in list(df.keys()):
-            abs_match = advm_columns_pattern.fullmatch(column)
-            if abs_match is not None:
-                advm_columns.append(abs_match.string)
-
-        if len(advm_columns) == 0:
-            return None
-        else:
-            return advm_columns
-
-    @classmethod
-    @abc.abstractmethod
-    def from_advm_data(cls, advm_data):
-        pass
-
-
-class ArgonautRawBackscatterData(RawBackscatterData):
-    """Class for managing raw backscatter data from SonTek Argonauts"""
-
     def _calc_measured_backscatter(self, acoustic_df, configuration_parameters, processing_parameters):
         """Calculate measured backscatter values based on processing parameters.
 
@@ -472,6 +407,33 @@ class ArgonautRawBackscatterData(RawBackscatterData):
 
         return mb_df
 
+    def add_data(self, other, keep_curr_obs=None):
+        """Adds other RawBackscatterData instance to self.
+
+        Throws exception if other RawBackscatterData object is incompatible with self. An exception will be raised if
+        keep_curr_obs=None and concurrent observations exist for variables.
+
+        :param other: RawBackscatterData object to be added
+        :type other: RawBackscatterData
+        :param keep_curr_obs: {None, True, False} Flag to indicate whether or not to keep current observations.
+        :return: Merged RawBackscatterData object
+        """
+
+        # test compatibility of other data set
+        if not self._configuration_parameters.is_compatible(other.get_configuration_parameters()) and \
+                isinstance(other, type(self)):
+
+            raise BackscatterDataIncompatibleException("ADVM data sets are incompatible")
+
+        other_data = other.get_data()
+        other_origin = other.get_origin()
+
+        other_data_manager = DataManager(other_data, other_origin)
+
+        combined_data_manager = self._data_manager.add_data_manager(other_data_manager, keep_curr_obs=keep_curr_obs)
+
+        return type(self)(combined_data_manager, self._configuration_parameters)
+
     def calc_measured_backscatter(self, processing_parameters):
         """Returns the measured backscatter based on requirements in processing_parameters.
 
@@ -497,6 +459,31 @@ class ArgonautRawBackscatterData(RawBackscatterData):
                                        self._configuration_parameters,
                                        processing_parameters,
                                        self.get_cell_range())
+
+    @classmethod
+    def find_advm_variable_names(cls, df):
+        """Finds and return a list of ADVM variables contained within a dataframe.
+
+        :param df:
+        :return:
+        """
+
+        # compile regular expression pattern
+        advm_columns_pattern = re.compile(cls._bsdata_columns_regex)
+
+        # create empty list to hold column names
+        advm_columns = []
+
+        # find the acoustic backscatter column names within the DataFrame
+        for column in list(df.keys()):
+            abs_match = advm_columns_pattern.fullmatch(column)
+            if abs_match is not None:
+                advm_columns.append(abs_match.string)
+
+        if len(advm_columns) == 0:
+            return None
+        else:
+            return advm_columns
 
     @classmethod
     def from_advm_data(cls, advm_data):
