@@ -308,7 +308,7 @@ class RawBackscatterData(BackscatterData):
     """Class for managing raw backscatter data"""
 
     # regex string to find ADVM data columns
-    _bs_data_columns_regex = r'^(Temp|Vbeam|Cell\d{2}(Amp|SNR)\d{1})$'
+    _bs_data_columns_regex = r'^(Temp|Vbeam|Cell\d{2}(Amp|SNR)\d{1}|Noise\d{1})$'
 
     # regex string to find acoustic backscatter columns
     _column_regex = r'^(Cell\d{2}(Amp|SNR)\d{1})$'
