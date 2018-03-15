@@ -3,14 +3,13 @@ This software is preliminary or provisional and is subject to revision. It is be
 
 # Setting up a development environment on Windows
 
-## 1. Install Anaconda
+1. Install Anaconda
 Download and install the latest version of [Anaconda](https://www.anaconda.com/download/).
 
-## 2. Install Git
+2. Install Git
 Download and install the latest version of [Git](https://git-scm.com/).
 
-## 3. Clone the repository
-      1. Open the Git Bash shell. 
-      2. Navigate to the directory where you want the top level directory of the repository to reside. Do this by using the 'cd' command in Bash. For example, if I want mfasaid to reside in 'D:\py\mfasaid', I will type 'cd /d/py' in the Bash prompt.
-	  3. Clone the repository. For mfasaid, the command will be 'git clone https://github.com/mdomanski-usgs/mfasaid.git'.
-
+3. Clone the repository
+   1. Open the Git Bash shell. 
+   2. Navigate to the directory where you want the top level directory of the repository to reside. Do this by using the 'cd' command in Bash. For example, if I want mfasaid to reside in 'D:\py\mfasaid', I will type 'cd /d/py' in the Bash prompt.
+   3. Clone the repository. For mfasaid, the command will be 'git clone https://github.com/mdomanski-usgs/mfasaid.git'.
