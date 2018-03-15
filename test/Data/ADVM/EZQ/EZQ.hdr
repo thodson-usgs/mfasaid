@@ -1,0 +1,184 @@
+[EZQ.ezq]
+---------------------------------------------------------------------
+Number of measurements                8247
+Number of checksum errors             0
+Time of first measurement             11/2/2017 3:30:00 PM
+Time of last measurement              12/15/2017 2:23:10 PM
+
+User setup
+---------------------------------------------------------------------
+Measurement interval                  900 sec
+Average interval                      180 sec
+Cell size                             499 cm
+Blanking distance                     7.00 m
+Measurement load                      13 %
+Diagnostics measurements              ENABLED
+Diagnostics - Interval                900 sec
+Diagnostics - Average interval        240 sec
+Diagnostics - Number of beams         4
+Diagnostics - Number of pings         4
+Stage measurements                    ENABLED
+Stage - Powerlevel                    LOW
+Stage - Offset                        0 m
+Stage - Average interval              60 sec
+Stage - Quality threshold             120
+Stage - Number of pings               40
+Analog input 1                        NONE
+Analog input 2                        NONE
+Powerlevel                            HIGH
+Coordinate system                     XYZ
+Sound speed                           MEASURED
+Salinity                              0.0 ppt
+Distance between pings                31.67 m
+Number of beams                       2
+Number of pings per burst             1
+Software version                      1.28
+Deployment name                       226n02
+Wrap mode                             OFF
+Deployment time                       11/2/2017 3:30:00 PM
+Comments                              EZQ test data
+System1                               231
+System2                               458
+System3                               115
+System4                               1384
+System5                               512
+System9                               0
+System10                              0
+System11                              0
+System12                              0
+System13                              0
+System14                              0
+System16                              3
+System17                              29555
+System22                              900
+System28                              240
+System29                              4
+System30                              4
+System31                              15026 15057 15087 15117
+System32                              96
+System37                              5
+System38                              416
+System39                              0
+System40                              0
+System41                              0
+System42                              0
+System43                              0
+System44                              0
+System45                              0
+Start command                         3
+CRC download                          ON
+
+Hardware configuration
+---------------------------------------------------------------------
+Serial number                         AQD 1234      
+Internal code version                 13
+Revision number                       60
+Recorder size                         5 MByte
+Firmware version                      1.05
+Velocity range                        NORMAL
+
+Head configuration
+---------------------------------------------------------------------
+Pressure sensor                       YES
+Compass                               NO
+Tilt sensor                           YES
+System 1                              1
+System 1                              0
+Head frequency                        1000 kHz
+Serial number                         EVQ 1234
+Transformation matrix                 4846 -4846 0
+                                      2261 2261 0
+                                      0 0 0
+Pressure sensor calibration           0 1 3254 12588
+Number of beams                       3
+System5                               25 25 25 0
+System7                               -32767 -1055 13581 -180
+                                      -32767 1622 13493 -250
+System8                               0 0 -1
+                                      0 1 0
+                                      1 0 0
+System9                               0 0 -1
+                                      0 -1 0
+                                      -1 0 0
+System10                              0 -1 1 0
+System11                              0 -1 -1 0
+System13                              17578 16328 13586 16128
+System14                              -32767 -1188 12671 80
+                                      -32767 -4293 12672 -80
+System15                              0 0 0 0
+                                      0 0 0 0
+                                      0 0 0 0
+                                      0 0 0 0
+System16                              0 0 0 0
+System17                              5279
+System18                              3600
+System19                              3600
+System20                              10000
+
+Data file format
+---------------------------------------------------------------------
+[EZQ.dat]
+ 1   Month                            (1-12)
+ 2   Day                              (1-31)
+ 3   Year
+ 4   Hour                             (0-23)
+ 5   Minute                           (0-59)
+ 6   Second                           (0-59)
+ 7   Error code
+ 8   Status code
+ 9   Battery voltage                  (V)
+10   Soundspeed                       (m/s)
+11   Temperature                      (degrees C)
+12   Analog input 1
+13   Analog input 2
+14   Velocity Cell 1 (Beam1|X)        (m/s)
+15   Velocity Cell 1 (Beam2|Y)        (m/s)
+16   Amplitude Cell 1 (Beam1)         (counts)
+17   Amplitude Cell 1 (Beam2)         (counts)
+     .
+     .
+     Velocity Cell n (Beam1|X)        (m/s)
+     Velocity Cell n (Beam2|Y)        (m/s)
+     Amplitude Cell n (Beam1)         (counts)
+     Amplitude Cell n (Beam2)         (counts)
+---------------------------------------------------------------------
+[EZQ.sen]
+ 1   Month                            (1-12)
+ 2   Day                              (1-31)
+ 3   Year
+ 4   Hour                             (0-23)
+ 5   Minute                           (0-59)
+ 6   Second                           (0-59)
+ 7   Blanking                         (m)
+ 8   Pitch                            (degrees)
+ 9   Roll                             (degrees)
+10   Pressure                         (dbar)
+11   Stage                            (m)
+12   Quality                          (counts)
+13   StageP                           (m)
+14   QualityP                         (counts)
+15   Sound speed                      (m/s)
+16   Stage meas above threshold       (%)
+17   Press meas above threshold       (%)
+18   Spare 1
+19   Spare 2
+20   Spare 3
+---------------------------------------------------------------------
+[EZQ.ra[n]]
+ 1   Month                            (1-12)
+ 2   Day                              (1-31)
+ 3   Year
+ 4   Hour                             (0-23)
+ 5   Minute                           (0-59)
+ 6   Second                           (0-59)
+ 7   Number of beams                  
+ 8   Blanking                         (m)
+ 9   Noise amplitude beam 1           (counts)
+10   Noise amplitude beam 2           (counts)
+11   Noise amplitude beam 3           (counts)
+12   Noise amplitude beam 4           (counts)
+13   Amplitude Cell 1                 (counts)
+14   Amplitude Cell 2                 (counts)
+     .
+     .
+     Amplitude Cell n                 (counts)

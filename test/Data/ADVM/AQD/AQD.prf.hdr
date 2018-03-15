@@ -1,0 +1,283 @@
+[AQD.prf.prf]
+---------------------------------------------------------------------
+Number of measurements                4130
+Number of checksum errors             0
+Time of first measurement             11/2/2017 2:30:00 PM
+Time of last measurement              12/15/2017 2:49:01 PM
+
+User setup
+---------------------------------------------------------------------
+Profile interval                      900 sec
+Number of cells                       50
+Cell size                             20 cm
+Average interval                      240 sec
+Measurement load                      14 %
+Transmit pulse length                 0.20 m
+Blanking distance                     0.20 m
+Compass update rate                   900 sec
+Distance measurements                 DISABLED
+Wave measurements                     ENABLED
+Wave - Powerlevel                     HIGH-
+Wave - Interval                       900 sec
+Wave - Number of samples              15
+Wave - Sampling rate                  1 Hz
+Wave - Cell size                      0.22 m
+Analog input 1                        NONE
+Analog input 2                        NONE
+Power output                          DISABLED
+Powerlevel                            HIGH-
+Coordinate system                     XYZ
+Sound speed                           MEASURED
+Salinity                              0.0 ppt
+Distance between pings                15.54 m
+Number of beams                       2
+Number of pings per burst             5
+Software version                      1.37.04
+Deployment name                       dc2n02
+Wrap mode                             OFF
+Deployment time                       11/2/2017 2:30:00 PM
+Comments                              AQD test data
+System1                               37
+System2                               20
+System3                               10
+System4                               679
+System5                               512
+System9                               32800
+System10                              32
+System11                              0
+System12                              0
+System13                              0
+System14                              900
+System16                              50
+System17                              2363
+System22                              900
+System28                              1
+System29                              1
+System30                              15
+System31                              15087 15117 15147 15176
+System32                              0
+System33                              0
+System34                              0
+System35                              29
+System36                              2400
+System38                              0
+System39                              0
+System40                              10
+System41                              0
+System42                              0
+System43                              0
+System44                              0
+System45                              6
+Start command                         Recorder deployment
+CRC download                          ON
+
+Hardware configuration
+---------------------------------------------------------------------
+Serial number                         AQD12345
+Hardware revision                     4 (E)
+Recorder size                         3773 MByte
+Firmware version                      3.40
+Velocity range                        HIGH
+Power output                          12V
+Sync signal data out delay            0 sec
+Sync signal power down delay          0 sec
+ProLog ID                             1287
+ProLog firmware version               4.22
+SD Card Inserted                      YES
+SD Card Ready                         YES
+SD Card Write protected               NO
+SD Card Type                          SDHC
+SD Card Supported                     YES
+
+Head configuration
+---------------------------------------------------------------------
+Pressure sensor                       YES
+Compass                               YES
+Tilt sensor                           YES
+System 1                              0
+Head frequency                        2000 kHz
+Serial number                         SHP 1234
+Transformation matrix                 0.5520 0.5520 0.0000
+                                      1.1831 -1.1831 0.0000
+                                      0.0000 0.0000 0.0000
+Magnetometer calibration matrix       0.9699 0.0091 0.0045
+                                      0.0091 1.0000 0.0036
+                                      0.4581 0.4345 0.0139
+Compass hard iron calibration         111 13 49
+Pressure sensor calibration           0 0 2994 15162
+Number of beams                       2
+System5                               25 0 25 0
+System7                               -25000 0 12500 -372
+                                      -25000 0 12500 -318
+System8                               0 1 0
+                                      -1 0 0
+                                      0 0 -1
+System9                               0 1 0
+                                      1 0 0
+                                      0 0 -1
+System10                              1 0 0 -1
+System11                              1 0 0 1
+System13                              1481 259 7128 10854
+System14                              -25000 0 12500 -183
+                                      -25000 0 12500 94
+System15                              31780 297 147 297
+                                      32767 119 15011 14236
+                                      454 111 13 49
+                                      0 0 0 0
+System16                              0 0 0 0
+System17                              4550
+System18                              3600
+System19                              3600
+System20                              10000
+
+
+Current profile cell center distance from head (m)
+---------------------------------------------------------------------
+  1    0.40
+  2    0.60
+  3    0.80
+  4    1.00
+  5    1.20
+  6    1.40
+  7    1.60
+  8    1.80
+  9    2.00
+ 10    2.20
+ 11    2.40
+ 12    2.60
+ 13    2.80
+ 14    3.00
+ 15    3.20
+ 16    3.40
+ 17    3.60
+ 18    3.80
+ 19    4.00
+ 20    4.20
+ 21    4.40
+ 22    4.60
+ 23    4.80
+ 24    5.00
+ 25    5.20
+ 26    5.40
+ 27    5.60
+ 28    5.80
+ 29    6.00
+ 30    6.20
+ 31    6.40
+ 32    6.60
+ 33    6.80
+ 34    7.00
+ 35    7.20
+ 36    7.40
+ 37    7.60
+ 38    7.80
+ 39    8.00
+ 40    8.20
+ 41    8.40
+ 42    8.60
+ 43    8.80
+ 44    9.00
+ 45    9.20
+ 46    9.40
+ 47    9.60
+ 48    9.80
+ 49   10.00
+ 50   10.20
+
+Data file format
+---------------------------------------------------------------------
+[AQD.prf.v1]
+ 1   Velocity Cell 1 (Beam1|X|East)   (m/s)
+ 2   Velocity Cell 2 (Beam1|X|East)   (m/s)
+     .
+     .
+ n   Velocity Cell n (Beam1|X|East)   (m/s)
+
+---------------------------------------------------------------------
+[AQD.prf.v2]
+ 1   Velocity Cell 1 (Beam2|Y|North)  (m/s)
+ 2   Velocity Cell 2 (Beam2|Y|North)  (m/s)
+     .
+     .
+ n   Velocity Cell n (Beam2|Y|North)  (m/s)
+
+---------------------------------------------------------------------
+[AQD.prf.a1]
+ 1   Amplitude Cell 1 (Beam1)         (counts)
+ 2   Amplitude Cell 2 (Beam1)         (counts)
+     .
+     .
+ n   Amplitude Cell n (Beam1)         (counts)
+
+---------------------------------------------------------------------
+[AQD.prf.a2]
+ 1   Amplitude Cell 1 (Beam2)         (counts)
+ 2   Amplitude Cell 2 (Beam2)         (counts)
+     .
+     .
+ n   Amplitude Cell n (Beam2)         (counts)
+
+---------------------------------------------------------------------
+[AQD.prf.sen]
+ 1   Month                            (1-12)
+ 2   Day                              (1-31)
+ 3   Year
+ 4   Hour                             (0-23)
+ 5   Minute                           (0-59)
+ 6   Second                           (0-59)
+ 7   Error code
+ 8   Status code
+ 9   Battery voltage                  (V)
+10   Soundspeed                       (m/s)
+11   Heading                          (degrees)
+12   Pitch                            (degrees)
+13   Roll                             (degrees)
+14   Pressure                         (dbar)
+15   Temperature                      (degrees C)
+16   Analog input 1
+17   Analog input 2
+
+---------------------------------------------------------------------
+[AQD.prf.whd]
+ 1   Month                            (1-12)
+ 2   Day                              (1-31)
+ 3   Year
+ 4   Hour                             (0-23)
+ 5   Minute                           (0-59)
+ 6   Second                           (0-59)
+ 7   Burst counter
+ 8   No of wave data records
+ 9   Cell position                    (m)
+10   Battery voltage                  (V)
+11   Soundspeed                       (m/s)
+12   Heading                          (degrees)
+13   Pitch                            (degrees)
+14   Roll                             (degrees)
+15   Minimum pressure                 (dbar)
+16   Maximum pressure                 (dbar)
+17   Temperature                      (degrees C)
+18   CellSize                         (m)
+19   Noise amplitude beam 1           (counts)
+20   Noise amplitude beam 2           (counts)
+21   Noise amplitude beam 3           (counts)
+22   Noise amplitude beam 4           (counts)
+23   AST window start                 (m)
+24   AST window size                  (m)
+25   AST window offset                (m)
+26   AST window clipped               (m)
+
+---------------------------------------------------------------------
+[AQD.prf.wad]
+ 1   Burst counter
+ 2   Ensemble counter
+ 3   Pressure                         (dbar)
+ 4   Spare
+ 5   Analog input
+ 6   Velocity (Beam1|X|East)          (m/s)
+ 7   Velocity (Beam2|Y|North)         (m/s)
+ 8   Velocity (Beam3|Z|Up)            (m/s)
+ 9   Velocity (N/A)                   (m/s)
+10   Amplitude (Beam1)                (counts)
+11   Amplitude (Beam2)                (counts)
+12   Amplitude (Beam3)                (counts)
+13   Amplitude (N/A)                  (counts)

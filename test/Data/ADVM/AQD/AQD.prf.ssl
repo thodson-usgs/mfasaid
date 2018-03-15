@@ -1,0 +1,5 @@
+Date and Time             Ecode Scode Level      Description
+11/2/2017 14:30:00    00    70    Info       First measurement
+12/15/2017 11:15:00    00    60    Warning    Wakeup state: Break
+12/15/2017 11:30:00    00    70    Info       Wakeup state: RTC Alarm
+12/15/2017 2:45:00 PM    00    70    Info       Last measurement
