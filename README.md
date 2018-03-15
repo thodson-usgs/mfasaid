@@ -20,6 +20,7 @@ The environment.yml file contains a list of packages that will create an environ
 2. Navigate to the directory that contains the repository.
 3. Create a new environment by typing `conda env create -f environment.yml` in the command prompt.
 4. Activate the environment by typing `activate said` in the command prompt.
+
 You must activate the `said` environment when you run SAID Python modules from the command line. For more information, see [this page](https://conda.io/docs/user-guide/tasks/manage-environments.html#creating-an-environment-from-an-environment-yml-file).
 
 ## Install the package
