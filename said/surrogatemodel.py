@@ -408,21 +408,22 @@ class SurrogateRatingModel:
 
         self._model = self._create_model()
 
-    def set_surrogate_transform(self, surrogate_transform, surrogate_variable=None):
-        """
+    def set_surrogate_transform(self, surrogate_transforms, surrogate_variable=None):
+        """Set the surrogate transforms.
 
-        :param surrogate_variable:
-        :param surrogate_transform:
+        :param surrogate_transforms: array-like
+        :param surrogate_variable: string, optional
         :return:
         """
 
-        saidmodel.LinearModel.check_transform(surrogate_transform)
+        for transform in surrogate_transforms:
+            saidmodel.LinearModel.check_transform(transform)
         if surrogate_variable is None:
-            surrogate_variable = self._surrogate_data.get_variable_names()[0]
+            surrogate_variable = self.get_surrogate_variables()[0]
         elif surrogate_variable not in self._surrogate_data.get_variable_names():
             raise ValueError("Invalid variable name: {}".format(surrogate_variable))
 
-        self._surrogate_transform[surrogate_variable] = surrogate_transform
+        self._surrogate_transform[surrogate_variable] = surrogate_transforms
         self._model = self._create_model()
 
     def set_surrogate_variables(self, surrogate_variables):
