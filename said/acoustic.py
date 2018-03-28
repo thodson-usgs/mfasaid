@@ -491,7 +491,8 @@ class RawBackscatterData(BackscatterData):
 
         advm_df = advm_data.get_data()
         backscatter_df = advm_df.filter(regex=cls._bs_data_columns_regex)
-        backscatter_origin = advm_data.get_origin()
+        advm_data_origin = advm_data.get_origin()
+        backscatter_origin = create_origin_from_data_frame(backscatter_df, advm_data_origin)
         backscatter_data_manager = DataManager(backscatter_df, backscatter_origin)
 
         # apply slant angle correction
