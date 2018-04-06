@@ -7,6 +7,221 @@ import pandas as pd
 from linearmodel import stats, model as saidmodel
 
 
+class HierarchicalModel:
+    """Class combines mulitple surrogate models and uses the best among
+    them to generate predicitons.
+
+    TODO:
+        -model skill is currently assessed by r^2. An alternative approach is
+        to rank models by tightest prediction interval.
+    """
+
+    def __init__(self, constituent_data, surrogate_data, model_list,
+                 min_samples=10, max_extrapolation=0.1, match_time=30,
+                 p_thres=0.05):
+        """
+
+        :param constituent_data:
+        :type constituent_data: DataManager
+        :param surrogate_data:
+        :type surrogate_data: DataManger
+        :param model_list:
+        """
+        self._constituent_data = copy.deepcopy(constituent_data)
+        self._surrogate_data = copy.deepcopy(surrogate_data)
+        self._model_list = model_list
+
+        self.match_time=match_time
+        self.max_extrapolation= max_extrapolation
+        self.min_samples = min_samples
+        self.p_thres = p_thres
+
+
+
+        self._create_models()
+
+
+    def _create_models(self):
+        """Populate with SurrogateRatingModel objects
+
+        Populates the HierarchicalModel with SurrogateRatingModels
+        """
+
+        self._set_variables_and_transforms()
+        #specify (n) the number of models managed within the instance
+        n = len(self._model_list)
+        self._models = [None for i in range(n)]
+
+        #initialize arrays to store p values, nobs and rsquared of each model
+        self._pvalues = np.zeros(n)
+        self._nobs = np.zeros(n)
+        self._rsquared = np.zeros(n)
+
+        for i in range(n):
+            #FIXME try to fix this by taking a the set of surrogate_variables
+            surrogate_set = list(set(self._surrogates[i])) #removes duplicates
+            self._models[i] = SurrogateRatingModel(self._constituent_data,
+                                                   self._surrogate_data,
+                                                   constituent_variable = self._constituent,
+                                                   surrogate_variables = surrogate_set,
+                                                   match_method = 'nearest',
+                                                   #should set match in init
+                                                   match_time = self.match_time)
+
+            for surrogate in surrogate_set:
+                #ceate an index of each occurance of the surrogate
+                surrogate_transforms = [self._surrogate_transforms[i][j] for j,v in enumerate(self._surrogates[i]) if v == surrogate]
+                #set the surrogate transforms based on the surrogate index
+                self._models[i].set_surrogate_transform(surrogate_transforms, surrogate_variable=surrogate)
+
+            #set transforms for each surrogate
+            #for surrogate in self._surrogates[i]:
+            #    self._models[i].set_surrogate_transform(self._surrogate_transforms[i], surrogate_variable=surrogate)
+
+            self._models[i].set_constituent_transform(self._constituent_transforms[i])
+
+            #FIXME depends on private methods
+            res = self._models[i]._model._model.fit()
+            self._pvalues[i] = res.f_pvalue
+            self._rsquared[i] = res.rsquared_adj
+            self._nobs[i] = res.nobs
+            #TODO check transforms
+
+
+    def _plot_model_time_series(self, ax, color='blue'):
+        """Plots the time series predicted by the HierarchicalModel
+
+        :param ax:
+        :return:
+        """
+        #get all predicted data
+        prediction = self.get_prediction()
+
+        #plot mean response
+        ax.plot(prediction.index,
+                prediction[self._constituent].as_matrix(),
+                color=color, linestyle='None',
+                marker='.', markersize=5,
+                label='Predicted ' + self._constituent)
+
+        #lower prediction interval
+        lower_interval_name = self._constituent + '_L90.0'
+
+        #upper prediction interval
+        upper_interval_name = self._constituent + '_U90.0'
+
+        ax.fill_between(prediction.index,
+                        prediction[lower_interval_name].as_matrix(),
+                        prediction[upper_interval_name].as_matrix(),
+                        facecolor='gray', edgecolor='gray', alpha=0.5, label='90% Prediction interval')
+
+
+    def _set_variables_and_transforms(self):
+        """Parses surrogates, constituent, and their transforms.
+
+        This function is a part of HierarchicalModel's init.
+        """
+        self._constituent = None
+        self._constituent_transforms = []
+
+        self._surrogates = []
+        self._surrogate_transforms = []
+
+        temp_constituents = []
+
+        for constituent, surrogates in self._model_list:
+
+            constituent_transform, raw_constituent = saidmodel.find_raw_variable(constituent)
+            temp_constituents.append(raw_constituent)
+            self._constituent_transforms.append(constituent_transform)
+
+            # make temporary list to store surrogates before appending them
+            sur_temp = []
+            sur_trans_temp = []
+            for surrogate in surrogates:
+                surrogate_transform, raw_surrogate = saidmodel.find_raw_variable(surrogate)
+                sur_temp.append(raw_surrogate)
+                sur_trans_temp.append(surrogate_transform)
+
+            self._surrogates.append(sur_temp)
+            self._surrogate_transforms.append(sur_trans_temp)
+
+        # check that there is one and only one constituent
+
+        temp_constituents =  list(set(temp_constituents))
+
+        if len(temp_constituents) != 1:
+            raise Exception('Only one raw constituent allowed')
+
+        self._constituent = temp_constituents[0]
+
+
+    def get_prediction(self, explanatory_data=None):
+        """Use the HierarchicalModel to make a prediction based on explanatory_data.
+
+        If no explantory data is give, the prediction is based on the data uses to initialize
+        the HierarchicalModel
+
+        :param explanatory_data:
+        :return:
+        """
+        #rank models by r2, starting with the lowest (worst)
+        model_ranks = self._rsquared.argsort()
+
+        for i in model_ranks:
+            #skip models that aren't robust
+            #TODO replace hard nobs thresh with thres * (surrogatecount + 1)
+            if self._nobs[i] < 10 or self._pvalues[i] > self.p_thres:
+                continue
+
+            elif type(explanatory_data) is type(None):
+                explanatory_data = self._models[i]._surrogate_data
+
+            prediction = self._models[i]._model.predict_response_variable(
+                explanatory_data = explanatory_data,
+                raw_response=True,
+                bias_correction=True
+                prediction_interval=True)
+
+            try:
+                hierarchical_prediction = hierarchical_prediction.update(prediction)
+
+            except NameError:
+                hierarchical_prediction = prediction
+
+        return prediction
+
+
+    def plot(self, plot_type='time series', ax=None, **kwargs):
+        """Plots a HierarchicalModel
+
+        :param plot_type:
+        :param ax:
+        :return:
+        """
+
+        # create an axis if one isn't passed
+        if ax is None:
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
+
+        if plot_type == 'time series':
+            self._plot_model_time_series(ax)
+            #check if 
+
+        else:
+            #TODO: implement other plotting functions for HierarchicalModel
+           raise ValueError("plot type not recognized or implemented")
+
+        return ax
+
+
+    def summarize(self):
+        """Creates a table of summary stats describing each submodel
+        """
+        pass
+
+
 class SurrogateRatingModel:
 
     def __init__(self, constituent_data, surrogate_data, **kwargs):
