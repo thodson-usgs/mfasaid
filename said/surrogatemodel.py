@@ -35,12 +35,13 @@ class HierarchicalModel:
     -improve interface with linearmodel to a avoid reliance on
     private methods.
 
-    """
+   """
 
     def __init__(self, constituent_data, surrogate_data, model_list,
                  min_samples=10, max_extrapolation=0.1, match_time=30,
                  p_thres=0.05):
         """ Initialize a HierarchicalModel
+
 
         :param constituent_data:
         :type constituent_data: DataManager
