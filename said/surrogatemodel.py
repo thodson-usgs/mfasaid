@@ -108,7 +108,7 @@ class SurrogateRatingModel:
                 continue
             time_window_width = self._match_time[variable]
             match_method = self._match_method[variable]
-            model_data = model_data.match_data(self._surrogate_data, variable, time_window_width, match_method)
+            model_data = model_data.match_data(self._surrogate_data, [variable], time_window_width, match_method)
 
         return model_data
 
@@ -415,7 +415,6 @@ class SurrogateRatingModel:
         :param surrogate_transform:
         :return:
         """
-
         saidmodel.LinearModel.check_transform(surrogate_transform)
         if surrogate_variable is None:
             surrogate_variable = self._surrogate_data.get_variable_names()[0]
